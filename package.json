@@ -1,0 +1,24 @@
+{
+  "name": "safe-upgrade",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@safe-upgrade/authorization": "workspace:*",
+    "@safe-upgrade/domain": "workspace:*",
+    "@safe-upgrade/evidence": "workspace:*",
+    "@safe-upgrade/tools": "workspace:*",
+    "@tenuo/core": "0.3.0-beta.0",
+    "@types/node": "^22.13.10",
+    "typescript": "~5.8.2",
+    "vitest": "^3.0.9"
+  }
+}

@@ -1,0 +1,153 @@
+/**
+ * Tenuo runtime construction.
+ *
+ * Two entry points, and the difference matters. The development runtime mints
+ * its own root, which is only acceptable for fixtures and tests. Production
+ * imports a warrant issued elsewhere and verifies it against an explicitly
+ * trusted root key, so this process can narrow authority it was given but can
+ * never create authority for itself.
+ */
+
+import { createTenuo, type Session, type Tenuo } from "@tenuo/core";
+import type { PackageManager } from "@safe-upgrade/domain";
+import type { AuditLog } from "@safe-upgrade/evidence";
+import {
+  DEFAULT_LIMITS,
+  createPathContext,
+  type GitHubToolOptions,
+  type ToolContext,
+  type ToolLimits,
+} from "@safe-upgrade/tools";
+import { RELEASE_HOST_ALLOWLIST } from "@safe-upgrade/tools";
+import { capabilityCeilings, type CeilingContext, type Ceilings } from "./capabilities.ts";
+import { workerProfiles, type WorkerProfile } from "./profiles.ts";
+import { DelegationBroker } from "./broker.ts";
+import { createProtectedToolset, type ProtectedToolset } from "./protected-tools.ts";
+import { SessionRegistry } from "./session-registry.ts";
+import type { WorkerId } from "@safe-upgrade/domain";
+
+export interface RuntimeOptions {
+  readonly runId: string;
+  /** Worktree root. Canonicalized here, and every path capability derives from it. */
+  readonly worktreeRoot: string;
+  readonly packageManager: PackageManager;
+  readonly defaultBranch: string;
+  readonly runBranch: string;
+  readonly requestedPackage: string;
+  readonly targetVersion: string;
+  readonly audit: AuditLog;
+  readonly limits?: ToolLimits;
+  readonly github?: GitHubToolOptions;
+  readonly releaseHosts?: readonly string[];
+  readonly parentTtlSeconds?: number;
+  readonly onInvoke?: (name: string, args: Readonly<Record<string, unknown>>) => void;
+}
+
+export interface ProductionRuntimeOptions extends RuntimeOptions {
+  /** Environment variable holding the hex public key of the trusted issuer. */
+  readonly rootPublicKeyEnv: string;
+  /** Warrant minted by that issuer for this run. */
+  readonly warrant: string;
+  /** Environment variable holding this holder's 32-byte secret. */
+  readonly holderSecretEnv: string;
+}
+
+export interface AuthorizationRuntime {
+  readonly tenuo: Tenuo;
+  readonly parentSession: Session;
+  readonly ceilings: Ceilings;
+  readonly profiles: Readonly<Record<WorkerId, WorkerProfile>>;
+  readonly toolset: ProtectedToolset;
+  readonly broker: DelegationBroker;
+  readonly registry: SessionRegistry;
+  readonly toolContext: ToolContext;
+}
+
+function assemble(
+  tenuo: Tenuo,
+  parentSession: Session,
+  options: RuntimeOptions,
+  ceilingContext: CeilingContext,
+  toolContext: ToolContext,
+): AuthorizationRuntime {
+  const ceilings = capabilityCeilings(ceilingContext);
+  const profiles = workerProfiles(ceilingContext);
+  const toolset = createProtectedToolset({
+    tenuo,
+    context: toolContext,
+    ceilings,
+    ...(options.github === undefined ? {} : { github: options.github }),
+    ...(options.releaseHosts === undefined ? {} : { releaseHosts: options.releaseHosts }),
+  });
+  const registry = new SessionRegistry();
+  const broker = new DelegationBroker({
+    tenuo,
+    parentSession,
+    profiles,
+    audit: options.audit,
+    registry,
+  });
+  return { tenuo, parentSession, ceilings, profiles, toolset, broker, registry, toolContext };
+}
+
+function contexts(options: RuntimeOptions): {
+  readonly ceilingContext: CeilingContext;
+  readonly toolContext: ToolContext;
+} {
+  const limits = options.limits ?? DEFAULT_LIMITS;
+  const paths = createPathContext(options.worktreeRoot);
+  const ceilingContext: CeilingContext = {
+    worktreeRoot: paths.realRoot,
+    requestedPackage: options.requestedPackage,
+    targetVersion: options.targetVersion,
+    runBranch: options.runBranch,
+    releaseHosts: options.releaseHosts ?? RELEASE_HOST_ALLOWLIST,
+    maxCommandTimeoutMs: limits.commandTimeoutMs,
+  };
+  const toolContext: ToolContext = {
+    paths,
+    runId: options.runId,
+    packageManager: options.packageManager,
+    runBranch: options.runBranch,
+    defaultBranch: options.defaultBranch,
+    requestedPackage: options.requestedPackage,
+    targetVersion: options.targetVersion,
+    limits,
+    ...(options.onInvoke === undefined ? {} : { onInvoke: options.onInvoke }),
+  };
+  return { ceilingContext, toolContext };
+}
+
+/**
+ * Fixture and test runtime. Mints its own root, which `@tenuo/core` permits only
+ * when NODE_ENV is development or test.
+ */
+export function createDevAuthorizationRuntime(options: RuntimeOptions): AuthorizationRuntime {
+  const tenuo = createTenuo({ root: createTenuo.devRoot() });
+  const { ceilingContext, toolContext } = contexts(options);
+  // The parent holds exactly the union of the ceilings, so every capability a
+  // worker could ever be delegated is visible in one object.
+  const parentSession = tenuo.session({
+    allow: capabilityCeilings(ceilingContext),
+    ttlSeconds: options.parentTtlSeconds ?? 3_600,
+  });
+  return assemble(tenuo, parentSession, options, ceilingContext, toolContext);
+}
+
+/**
+ * Production runtime. The warrant is imported, not minted: this process cannot
+ * issue authority to itself, only narrow what an external issuer granted.
+ */
+export function createProductionAuthorizationRuntime(
+  options: ProductionRuntimeOptions,
+): AuthorizationRuntime {
+  const tenuo = createTenuo({
+    trustedRoots: [createTenuo.publicKeyFromEnv(options.rootPublicKeyEnv)],
+  });
+  const parentSession = tenuo.sessionFromWire({
+    warrant: options.warrant,
+    holderKey: createTenuo.holderKeyFromEnv(options.holderSecretEnv),
+  });
+  const { ceilingContext, toolContext } = contexts(options);
+  return assemble(tenuo, parentSession, options, ceilingContext, toolContext);
+}
