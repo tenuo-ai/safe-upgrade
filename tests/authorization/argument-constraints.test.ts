@@ -174,6 +174,46 @@ describe("network constraints", () => {
   });
 });
 
+describe("reading a published version's exports", () => {
+  /**
+   * This is the one capability whose body loads third-party code, so its bounds are worth
+   * stating separately from the fact that it is read-only.
+   */
+  it("is held by the researcher alone, not by any worker that writes", async () => {
+    const { broker } = harness.runtime;
+    for (const worker of ["implementer", "test_author", "ci_author", "publisher", "verifier"] as const) {
+      await expect(
+        broker.withWorker(worker, "implement", (handle) =>
+          handle.tools.read_package_exports({ packageName: "left-pad", version: "1.3.0" }),
+        ),
+      ).rejects.toBeInstanceOf(AuthorizationError);
+    }
+    expect(harness.invocations).toEqual([]);
+  });
+
+  it("denies a package other than the one this run may upgrade", async () => {
+    const { broker } = harness.runtime;
+    await expect(
+      broker.withWorker("researcher", "research", (handle) =>
+        handle.tools.read_package_exports({ packageName: "not-left-pad", version: "1.3.0" }),
+      ),
+    ).rejects.toBeInstanceOf(AuthorizationError);
+    expect(harness.invocations).toEqual([]);
+  });
+
+  it("denies a version carrying a path segment, which would reach the installer", async () => {
+    const { broker } = harness.runtime;
+    for (const version of ["../../../etc/passwd", "1.3.0 && curl evil.test", "latest"]) {
+      await expect(
+        broker.withWorker("researcher", "research", (handle) =>
+          handle.tools.read_package_exports({ packageName: "left-pad", version }),
+        ),
+      ).rejects.toBeInstanceOf(AuthorizationError);
+    }
+    expect(harness.invocations).toEqual([]);
+  });
+});
+
 describe("zero-trust argument naming", () => {
   it("denies an argument the capability does not name", async () => {
     const { broker, toolset } = harness.runtime;

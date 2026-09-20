@@ -272,3 +272,63 @@ run's own verdict: `verified` is this system's opinion of its own work, and trea
 as permission to push would let the thing being checked decide it had passed.
 
 A verified run that nobody approved for publishing says where the branch is and stops.
+
+## Reading a package's exports means loading it
+
+Spec section 12 lists the protected tools, and none of them executes a dependency. Finding
+an API change requires one that does, so this is a deliberate addition.
+
+An API change is invisible in a package manifest. postcss 7 and 8 both publish as
+CommonJS, with the same entry point and the same callable export; the difference is that
+`postcss.vendor` exists in 7 and does not in 8. No comparison of manifest fields finds
+that, and the only other place it is written down is release prose, which this system does
+not derive decisions from. What remains is to install both versions and look at what they
+export, which means running their top-level code.
+
+So `read_package_exports` does that, bounded:
+
+- a scratch directory outside the run's worktree, installed with `--ignore-scripts`, so no
+  lifecycle script runs;
+- a child process with the run's usual bounds — no shell, an environment allowlist, an
+  output cap, a timeout, process-tree termination;
+- the child is handed the installed directory and nothing else: no repository path, no
+  argument a worker chose. It prints names and exits;
+- the researcher alone holds the capability, bounded to the one package the run may
+  upgrade and to a version matching a semver pattern rather than a glob, because the
+  version reaches an installer argument;
+- an unreadable surface is recorded as a limit on what the run can conclude, not raised as
+  a failure.
+
+The authority is not new in kind. The repository is about to depend on this exact version,
+and the verifier already runs a clean install and the repository's own scripts, which load
+it anyway. What changes is that it happens earlier, so that a break is found by name
+instead of from a stack trace.
+
+## A removed export is found structurally and then refused
+
+The finding that an export is gone is certain: the name was present in one installed
+version and absent in the other, so its confidence is 1. What replaced it is not a
+structural question at all. A set difference cannot distinguish a rename from a removal,
+and "one name left and another arrived" is a coincidence often enough that acting on it
+would be guessing — guessing that puts an API which does not exist into source that has to
+compile.
+
+So the implementer does not attempt these. It reports the symbol, the files that reach it,
+and the names the target added as somewhere to look, and the run ends `blocked`. That is a
+worse-sounding outcome than a rewritten lockfile and a green test suite, and a better one:
+the fixture for this case passes its tests at the target version, because the only covered
+call site is one that survives.
+
+Counting uses excludes the line that imports the name. That line has to change too, which
+is why it is left out rather than reported: "reaches it in two places" should mean two
+uses, not one use and its import.
+
+## What the export comparison does not see
+
+It reads text, not types. A name reached through a computed access, through a local alias,
+or through a re-export is not found, so "no reference found" means "none visible here"
+rather than "none". It also says nothing about a change in what an export *does* or in the
+arguments it takes, which is why a major bump with an unchanged export surface still
+reports that its call sites were not assessed — now saying that the exports were compared
+and none this repository uses were removed, which is a narrower and more useful statement
+than the one it replaces.

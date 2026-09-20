@@ -27,6 +27,7 @@ import type {
   ListFilesArgs,
   ReadFileArgs,
   ReadGitDiffArgs,
+  ReadPackageExportsArgs,
   ReadRegistryMetadataArgs,
   RunCheckArgs,
   UpdateDependencyArgs,
@@ -45,6 +46,7 @@ export const CAPABILITIES = [
   "update_dependency",
   "run_check",
   "read_registry_metadata",
+  "read_package_exports",
   "fetch_release_document",
   "read_git_status",
   "read_git_diff",
@@ -74,6 +76,7 @@ export interface CapabilityArgs {
   update_dependency: UpdateDependencyArgs;
   run_check: RunCheckArgs;
   read_registry_metadata: ReadRegistryMetadataArgs;
+  read_package_exports: ReadPackageExportsArgs;
   fetch_release_document: FetchReleaseDocumentArgs;
   read_git_status: EmptyArgs;
   read_git_diff: ReadGitDiffArgs;
@@ -193,6 +196,17 @@ export function capabilityCeilings(context: CeilingContext): Ceilings {
       // A version, not a path segment smuggled into the registry URL. A glob
       // cannot express this: `*` matches `/`, so `pattern("*.*.*")` accepts
       // `../../../etc/passwd`.
+      version: regex(SEMVER),
+    },
+    /**
+     * Reading a published version's exports, which means loading it.
+     *
+     * Bounded to the one package this run may upgrade, and to a version, not a path
+     * segment: the version reaches an installer argument, and `pattern` would not do —
+     * `*` matches `/`, so a glob here would accept `../../../etc/passwd`.
+     */
+    read_package_exports: {
+      packageName: exact(context.requestedPackage),
       version: regex(SEMVER),
     },
     // The only network capability, so the host allowlist and the SSRF blocking

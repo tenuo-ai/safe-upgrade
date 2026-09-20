@@ -110,7 +110,15 @@ export function workerProfiles(context: CeilingContext): Readonly<Record<WorkerI
     },
     researcher: {
       worker: "researcher",
-      allow: pick(ceilings, [...READ_ONLY, "read_registry_metadata", "fetch_release_document"]),
+      allow: pick(ceilings, [
+        ...READ_ONLY,
+        "read_registry_metadata",
+        // The researcher alone, and only for the one package this run may upgrade.
+        // Reading a version's exports means loading it, so no worker that writes
+        // anything holds this.
+        "read_package_exports",
+        "fetch_release_document",
+      ]),
       ttlSeconds: 300,
       rationale:
         "Reads the repository and allowlisted release sources. Cannot write, execute, or touch git.",

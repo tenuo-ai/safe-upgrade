@@ -28,7 +28,11 @@ export interface FixtureRepo {
 }
 
 export function createFixtureRepo(
-  options: { readonly fixture?: string; readonly defaultBranch?: string } = {},
+  options: {
+    readonly fixture?: string;
+    readonly defaultBranch?: string;
+    readonly message?: string;
+  } = {},
 ): FixtureRepo {
   const fixture = options.fixture ?? "legacy-app";
   const defaultBranch = options.defaultBranch ?? "main";
@@ -48,7 +52,7 @@ export function createFixtureRepo(
   git(["config", "user.name", "Fixture"]);
   git(["config", "commit.gpgsign", "false"]);
   git(["add", "."]);
-  git(["commit", "-m", "legacy app at escape-string-regexp 4.0.0"]);
+  git(["commit", "-m", options.message ?? `${fixture} as committed`]);
 
   return {
     path: root,

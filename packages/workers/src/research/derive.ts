@@ -15,6 +15,7 @@
 
 import type { MigrationFinding } from "@safe-upgrade/domain";
 import type { PublishedShape } from "@safe-upgrade/tools";
+import type { MemberReference } from "./members.ts";
 import type { Usage } from "./usages.ts";
 
 export interface DerivationInput {
@@ -24,6 +25,17 @@ export interface DerivationInput {
   readonly currentShape: PublishedShape;
   readonly targetShape: PublishedShape;
   readonly usages: readonly Usage[];
+  /**
+   * Exports the target version no longer has, that this repository reaches.
+   *
+   * Empty both when nothing was removed and when the surface could not be read, which
+   * are different situations: `surfaceRead` tells them apart.
+   */
+  readonly removedMembers: readonly MemberReference[];
+  /** Names the target added, for a reviewer looking for the replacement. */
+  readonly addedNames: readonly string[];
+  /** Whether both versions' export surfaces were observed. */
+  readonly surfaceRead: boolean;
   /** Evidence ids for the two registry documents the shapes came from. */
   readonly shapeEvidenceIds: readonly string[];
   /** Evidence ids for any release prose that was retrieved. */
@@ -115,12 +127,43 @@ export function deriveFindings(input: DerivationInput): Derivation {
     );
   }
 
-  if (isMajorBump(input.currentVersion, input.targetVersion) && !loadBreaks) {
+  // An export this repository uses that the target does not have. Structural and
+  // certain: the name was present in one installed version and absent in the other.
+  const byMember = groupByMember(input.removedMembers);
+  for (const [member, references] of byMember) {
+    findings.push({
+      id: `export-removed-at-target:${member}`,
+      releaseClaim: `${input.packageName} ${input.currentVersion} exports ${member}, and ${input.targetVersion} does not. This repository reaches it in ${String(references.length)} place(s).`,
+      evidenceIds: cite,
+      affectedSymbols: [`${input.packageName}.${member}`],
+      affectedFiles: unique(references.map((reference) => reference.file)),
+      // Deliberately not a proposed edit. The replacement is a semantic question: the
+      // name that took over, if any, is not derivable from a set difference, and
+      // guessing it would put an invented API into source that has to compile.
+      requiredChange: `Replace every use of ${input.packageName}.${member}. ${describeCandidates(input.addedNames)}`,
+      confidence: 1,
+    });
+  }
+
+  if (!input.surfaceRead) {
+    uncertainty.push(
+      `The export surface of ${input.packageName} could not be compared across ${input.currentVersion} and ${input.targetVersion}, so a renamed or removed export would not have been noticed.`,
+    );
+  }
+
+  if (isMajorBump(input.currentVersion, input.targetVersion) && !loadBreaks && byMember.size === 0) {
     // A major bump asserts a break somewhere. Finding none from structure means
     // the break is described in prose, which is exactly what these rules cannot
     // read.
+    // Only said when nothing else explains the bump. A run that found an ESM break or a
+    // removed export has an explanation, and adding "we might be in the dark" to it
+    // would mean no upgrade could ever be verified, whatever was established.
     uncertainty.push(
-      `${input.packageName} ${input.currentVersion} to ${input.targetVersion} is a major bump, and no structural rule explains what it breaks. Whatever changed is described in prose that was not interpreted, so the ${String(input.usages.length)} call site(s) found were not assessed against it.`,
+      `${input.packageName} ${input.currentVersion} to ${input.targetVersion} is a major bump, and no structural rule explains what it breaks. ${
+        input.surfaceRead
+          ? "Its exports were compared across both versions and this repository uses none that were removed, so whatever changed is a change in behaviour or in arguments"
+          : "Its exports could not be compared, and whatever changed"
+      } is described in prose that was not interpreted, so the ${String(input.usages.length)} call site(s) found were not assessed against it.`,
     );
   }
 
@@ -153,6 +196,35 @@ function nodeRequirementChanged(
     return null;
   }
   return { current: current.requiredNodeRange ?? "nothing in particular", target: target.requiredNodeRange };
+}
+
+function groupByMember(references: readonly MemberReference[]): ReadonlyMap<string, readonly MemberReference[]> {
+  const grouped = new Map<string, MemberReference[]>();
+  for (const reference of references) {
+    const existing = grouped.get(reference.member);
+    if (existing === undefined) {
+      grouped.set(reference.member, [reference]);
+    } else {
+      existing.push(reference);
+    }
+  }
+  return grouped;
+}
+
+/**
+ * What the target added, as a lead rather than an answer.
+ *
+ * Offered because a reviewer looking for the replacement will look here first, and
+ * withheld as a recommendation because "one name went and another arrived" is a
+ * coincidence often enough that acting on it would be guessing.
+ */
+function describeCandidates(added: readonly string[]): string {
+  if (added.length === 0) {
+    return "The target version adds no new top-level export, so the replacement is not in this package.";
+  }
+  const shown = added.slice(0, 8).join(", ");
+  const rest = added.length > 8 ? `, and ${String(added.length - 8)} more` : "";
+  return `The target version adds ${shown}${rest}, which is where to look for a replacement; which one applies is not something a list of names can settle.`;
 }
 
 function isMajorBump(current: string, target: string): boolean {

@@ -59,3 +59,5 @@ export {
   createManifestTools,
   setTopLevelField,
 } from "./manifest.ts";
+export { addedNames, createSurfaceTools, removedNames } from "./surface.ts";
+export type { PackageExports, ReadPackageExportsArgs } from "./surface.ts";

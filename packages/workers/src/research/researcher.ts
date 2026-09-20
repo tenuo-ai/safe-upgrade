@@ -22,11 +22,61 @@ import type { MigrationFinding, ReleaseEvidence } from "@safe-upgrade/domain";
 import type { UpgradeStateUpdate, WorkerFn, WorkerInput } from "@safe-upgrade/graph";
 import type { PublishedShape, RegistryMetadata } from "@safe-upgrade/tools";
 import type { RunContext } from "../context.ts";
+import { addedNames, removedNames } from "@safe-upgrade/tools";
 import { deriveFindings, relevantExtract } from "./derive.ts";
+import { findMemberReferences, type MemberReference } from "./members.ts";
 import { findUsages, isSourceFile, type Usage } from "./usages.ts";
 
 /** Files read while looking for call sites. Bounded so a large repository cannot stall the run. */
 const MAX_SCANNED_FILES = 400;
+
+interface SurfaceComparison {
+  /** Whether both versions' surfaces were observed. */
+  readonly read: boolean;
+  readonly removed: readonly string[];
+  readonly added: readonly string[];
+  /** Places this repository reaches a removed export. */
+  readonly references: readonly MemberReference[];
+}
+
+/**
+ * What the two versions export, and which of the losses this repository would feel.
+ *
+ * Only the files already known to load the package are re-read: a name removed from a
+ * package cannot matter in a file that never mentions it, and reading the whole
+ * repository again to establish that would be work with a known answer.
+ */
+async function compareSurfaces(
+  input: WorkerInput,
+  context: RunContext,
+  packageName: string,
+  usages: readonly Usage[],
+): Promise<SurfaceComparison> {
+  const [before, after] = await Promise.all([
+    input.handle.tools.read_package_exports({ packageName, version: context.facts.currentVersion }),
+    input.handle.tools.read_package_exports({ packageName, version: context.request.targetVersion }),
+  ]);
+
+  const read = before.observed && after.observed;
+  const removed = removedNames(before, after);
+  const added = addedNames(before, after);
+  if (!read || removed.length === 0) {
+    return { read, removed, added, references: [] };
+  }
+
+  const references: MemberReference[] = [];
+  for (const file of unique(usages.map((usage) => usage.file))) {
+    const contents = await input.handle.tools.read_file({
+      path: `${context.facts.worktreePath}/${file}`,
+    });
+    references.push(...findMemberReferences(file, contents.content, packageName, removed));
+  }
+  return { read, removed, added, references };
+}
+
+function unique(values: readonly string[]): readonly string[] {
+  return [...new Set(values)];
+}
 
 export function createResearcher(context: RunContext): WorkerFn {
   return async (input: WorkerInput): Promise<UpgradeStateUpdate> => {
@@ -38,6 +88,7 @@ export function createResearcher(context: RunContext): WorkerFn {
 
     const documentIds = await proseEvidence(input, target.metadata, targetVersion, evidence);
     const usages = await scanUsages(input, context, packageName);
+    const surface = await compareSurfaces(input, context, packageName, usages);
 
     const { findings, uncertainty } = deriveFindings({
       packageName,
@@ -46,6 +97,9 @@ export function createResearcher(context: RunContext): WorkerFn {
       currentShape: current.metadata.shape,
       targetShape: target.metadata.shape,
       usages,
+      removedMembers: surface.references,
+      addedNames: surface.added,
+      surfaceRead: surface.read,
       shapeEvidenceIds: [current.evidenceId, target.evidenceId],
       documentEvidenceIds: documentIds,
     });
@@ -60,6 +114,12 @@ export function createResearcher(context: RunContext): WorkerFn {
         callSites: usages.map((usage) => `${usage.file}:${String(usage.line)} (${usage.style})`),
         currentShape: current.metadata.shape,
         targetShape: target.metadata.shape,
+        surfaceRead: surface.read,
+        removedExports: surface.removed,
+        addedExports: surface.added,
+        reachedRemovedExports: surface.references.map(
+          (reference) => `${reference.file}:${String(reference.line)} ${reference.member}`,
+        ),
         uncertainty,
       },
     });
@@ -136,10 +196,29 @@ async function proseEvidence(
     return [];
   }
 
-  const url = `https://api.github.com/repos/${repository}/releases/tags/v${targetVersion}`;
+  // Both spellings, because the convention is per-project: sindresorhus tags `v5.0.0`
+  // and postcss tags `8.4.35`, and guessing one of them wrong is the difference between
+  // citing a release note and reporting that none exists.
+  for (const tag of [`v${targetVersion}`, targetVersion]) {
+    const found = await tryRelease(input, repository, tag, targetVersion, sink);
+    if (found !== null) {
+      return found;
+    }
+  }
+  return [];
+}
+
+async function tryRelease(
+  input: WorkerInput,
+  repository: string,
+  tag: string,
+  targetVersion: string,
+  sink: ReleaseEvidence[],
+): Promise<readonly string[] | null> {
+  const url = `https://api.github.com/repos/${repository}/releases/tags/${tag}`;
   try {
     const document = await input.handle.tools.fetch_release_document({ url });
-    const id = `release:${repository}@v${targetVersion}`;
+    const id = `release:${repository}@${tag}`;
     sink.push({
       id,
       sourceUrl: url,
@@ -159,7 +238,9 @@ async function proseEvidence(
         reason: error instanceof ReleaseEvidenceError ? error.message : "fetch was refused",
       },
     });
-    return [];
+    // Null, not an empty list: "this tag does not exist" has to be distinguishable from
+    // "this tag exists and cited nothing", or the second spelling is never tried.
+    return null;
   }
 }
 

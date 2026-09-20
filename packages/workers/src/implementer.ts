@@ -30,12 +30,38 @@ const MAX_CONVERTED_FILES = 200;
 
 export function createImplementer(context: RunContext): WorkerFn {
   return async (input: WorkerInput): Promise<UpgradeStateUpdate> => {
+    // Findings that name an export this repository uses and the target does not have.
+    // There is no rule here that discharges one: the replacement is a semantic question,
+    // and inventing a name would put an API that does not exist into source that has to
+    // compile. Reported once, with the places to look, rather than attempted — otherwise
+    // the finding stays unresolved, this worker stays eligible, and the run spends its
+    // attempts rewriting the lockfile.
+    const unfixable = input.state.findings.filter((finding) =>
+      finding.id.startsWith("export-removed-at-target:"),
+    );
+    if (unfixable.length > 0) {
+      return { blockingConditions: unfixable.map(describeUnfixable) };
+    }
+
     const esmFinding = input.state.findings.find((finding) => finding.id === "esm-only-at-target");
     if (esmFinding === undefined) {
       return moveDependencyOnly(input, context);
     }
     return migrateToEsm(input, context, esmFinding);
   };
+}
+
+/**
+ * A break this worker will not attempt, in terms a person can act on.
+ *
+ * Names the symbol, the files, and what research offered as a lead. The upgrade is not
+ * abandoned quietly: the run reports `blocked` with this as the reason, which is a more
+ * useful answer than a rewritten lockfile and a passing test suite that never loaded the
+ * affected code.
+ */
+function describeUnfixable(finding: MigrationFinding): string {
+  const where = finding.affectedFiles.join(", ") || "no file this scan could see";
+  return `${finding.releaseClaim} No mechanical rule can make that substitution, so this needs a person. Affected: ${where}. ${finding.requiredChange}`;
 }
 
 /**

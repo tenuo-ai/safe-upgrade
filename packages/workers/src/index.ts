@@ -48,3 +48,5 @@ export function createWorkerRegistry(context: RunContext): WorkerRegistry {
     publisher: createPublisher(context),
   };
 }
+export { findMemberReferences, readBindings } from "./research/members.ts";
+export type { MemberReference } from "./research/members.ts";

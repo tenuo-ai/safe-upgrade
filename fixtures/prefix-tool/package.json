@@ -1,0 +1,14 @@
+{
+  "name": "prefix-tool",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Fixture: a CommonJS app pinned to postcss 7, whose postcss.vendor usage is removed in postcss 8.",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "node --test",
+    "build": "node scripts/build.mjs"
+  },
+  "dependencies": {
+    "postcss": "7.0.39"
+  }
+}

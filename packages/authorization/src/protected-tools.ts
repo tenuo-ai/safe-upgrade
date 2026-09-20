@@ -17,6 +17,7 @@ import {
   createManifestTools,
   createPackageTools,
   createReleaseTools,
+  createSurfaceTools,
   type GitHubToolOptions,
   type RawTool,
   type ToolContext,
@@ -38,6 +39,7 @@ export interface ProtectedToolset {
   readonly update_dependency: Wrapped<ReturnType<typeof createPackageTools>["updateDependency"]>;
   readonly run_check: Wrapped<ReturnType<typeof createPackageTools>["runCheck"]>;
   readonly read_registry_metadata: Wrapped<ReturnType<typeof createReleaseTools>["readRegistryMetadata"]>;
+  readonly read_package_exports: Wrapped<ReturnType<typeof createSurfaceTools>["readPackageExports"]>;
   readonly fetch_release_document: Wrapped<ReturnType<typeof createReleaseTools>["fetchReleaseDocument"]>;
   readonly read_git_status: Wrapped<ReturnType<typeof createGitTools>["readGitStatus"]>;
   readonly read_git_diff: Wrapped<ReturnType<typeof createGitTools>["readGitDiff"]>;
@@ -72,6 +74,7 @@ export function createProtectedToolset(options: ProtectedToolsetOptions): Protec
   const files = createFileTools(context);
   const packages = createPackageTools(context);
   const releases = createReleaseTools(context, options.releaseHosts);
+  const surface = createSurfaceTools(context);
   const git = createGitTools(context);
   const manifest = createManifestTools(context);
 
@@ -86,6 +89,7 @@ export function createProtectedToolset(options: ProtectedToolsetOptions): Protec
     update_dependency: wrap("update_dependency", packages.updateDependency),
     run_check: wrap("run_check", packages.runCheck),
     read_registry_metadata: wrap("read_registry_metadata", releases.readRegistryMetadata),
+    read_package_exports: wrap("read_package_exports", surface.readPackageExports),
     fetch_release_document: wrap("fetch_release_document", releases.fetchReleaseDocument),
     read_git_status: wrap("read_git_status", git.readGitStatus),
     read_git_diff: wrap("read_git_diff", git.readGitDiff),

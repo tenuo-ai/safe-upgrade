@@ -59,6 +59,20 @@ pushes it, and opens a draft pull request only when a person has approved that
 separately. It cannot merge, cannot mark a draft ready, and cannot push any branch
 but its own.
 
+A second fixture, `fixtures/prefix-tool`, covers the harder shape: a break that no
+manifest announces. It is pinned to `postcss` 7 and upgraded to 8, and both versions
+publish as CommonJS with the same entry point — the difference is that
+`postcss.vendor` exists in 7 and does not in 8. The run finds that by installing both
+versions and comparing what they export, then finds which of the repository's files
+reach the missing name and which do not.
+
+It then refuses to fix it. What replaced a removed export is not a structural
+question, and a set difference cannot tell a rename from a removal, so the run ends
+`blocked` naming the symbol, the file, and the names the target added as somewhere to
+look. That is the point of the fixture: its test suite *passes* at the target
+version, because the only covered call site is one that survives, so a run that
+trusted a green suite would have reported success on code that does not build.
+
 Not built yet: the Jev SDK adapter. With no engine configured the router uses the
 deterministic priority order, which is a supported configuration rather than a
 placeholder — the route is then a pure function of graph state.
