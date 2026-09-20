@@ -9,6 +9,6 @@ coverage/
 !.env.example
 .DS_Store
 
-# Local strategy notes. Not for the upstream repo.
-docs/strategy.md
+# Engineering notes. Local only — not the user guide.
+docs/
 internal/
