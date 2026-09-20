@@ -13,7 +13,13 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { RunStatus } from "@safe-upgrade/domain";
-import { renderReport, runUpgrade, type RunOptions, type RunReport } from "@safe-upgrade/runner";
+import {
+  formatProgress,
+  renderReport,
+  runUpgrade,
+  type RunOptions,
+  type RunReport,
+} from "@safe-upgrade/runner";
 import { parseArguments, UsageError, wantsHelp, wantsVersion, type ParsedArguments } from "./arguments.ts";
 import { chooseAuthorization } from "./authorization.ts";
 import { DeterministicEngine, JevDecisionEngine } from "@safe-upgrade/jev";
@@ -89,7 +95,15 @@ export async function main(argv: readonly string[], streams: Streams): Promise<n
 
   let report: RunReport;
   try {
-    report = await runUpgrade(options);
+    report = await runUpgrade({
+      ...options,
+      // To stderr, because stdout carries the report and is routinely piped into something that
+      // parses it. A reader watching the terminal sees both; `--format json | jq` sees neither
+      // this nor the summary line that already went there.
+      ...(parsed.quiet
+        ? {}
+        : { onProgress: (event) => streams.err(`  ${formatProgress(event)}\n`) }),
+    });
   } catch (error) {
     // A run that could not start is not a verdict on the upgrade, so it does not borrow one
     // of the status codes.

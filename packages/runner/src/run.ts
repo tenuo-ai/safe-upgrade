@@ -15,6 +15,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { writeArtifacts } from "./artifacts.ts";
+import { describeProgress, type ProgressReporter } from "./progress.ts";
 import { join } from "node:path";
 import {
   describeElevation,
@@ -26,6 +27,7 @@ import {
   type CheckPurpose,
   type ElevationGrant,
   type FinalResult,
+  type Phase,
   type RepositoryFacts,
   type UpgradeRequest,
 } from "@safe-upgrade/domain";
@@ -75,6 +77,13 @@ export interface RunOptions {
    * run is told the answer.
    */
   readonly approvals?: readonly ElevationGrant[];
+  /**
+   * Called once per node as the run proceeds, for a caller that wants to show progress.
+   *
+   * Progress only. Nothing a run concludes arrives this way, so a caller that ignores it sees
+   * exactly the same report.
+   */
+  readonly onProgress?: ProgressReporter;
   /**
    * Whether a person has approved publishing this run's branch.
    *
@@ -267,6 +276,7 @@ export async function runUpgrade(options: RunOptions): Promise<RunReport> {
       invocation,
       { request, ...(options.publishApproved === true ? { approvalGranted: true } : {}) },
       classification,
+      options.onProgress,
     );
 
     const result = finalState.result;
@@ -323,9 +333,35 @@ async function runGraph(
   invocation: Invocation,
   input: { readonly request: UpgradeRequest; readonly approvalGranted?: boolean },
   classification: Parameters<typeof classificationInput>[1],
+  onProgress: ProgressReporter | undefined,
 ): Promise<UpgradeState> {
   try {
-    return (await graph.invoke(input, invocation)) as UpgradeState;
+    // Streamed rather than invoked, so a caller can say what is happening while it happens.
+    //
+    // Both modes, for one reason each: `updates` names the node that just ran, and `values` is
+    // the accumulated state in plain form. Taking the name from one and the contents from the
+    // other avoids reading an update through its reducer wrappers, which is all `updates` would
+    // give — an overwrite channel reports a wrapper rather than the value.
+    let ran: Phase | null = null;
+    let previous: UpgradeState | null = null;
+    for await (const [mode, chunk] of await graph.stream(input, {
+      ...invocation,
+      streamMode: ["updates", "values"],
+    })) {
+      if (mode === "updates") {
+        ran = (Object.keys(chunk as Record<string, unknown>)[0] ?? null) as Phase | null;
+        continue;
+      }
+      const values = chunk as UpgradeState;
+      if (onProgress !== undefined && ran !== null) {
+        onProgress(describeProgress(ran, values, previous));
+      }
+      previous = values;
+      ran = null;
+    }
+    // The final state from the checkpointer, which is the same read the recovery below makes.
+    // `stream` yields per superstep and does not hand back an accumulated result.
+    return (await graph.getState(invocation)).values as UpgradeState;
   } catch (error) {
     if (!(error instanceof GraphRecursionError)) {
       throw error;

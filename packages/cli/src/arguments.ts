@@ -36,6 +36,8 @@ export interface ParsedArguments {
   readonly engine: "jev" | "deterministic";
   /** Below this, the engine's answer is replaced by the deterministic order. */
   readonly confidenceThreshold: number | undefined;
+  /** Suppress the per-step progress lines, which go to stderr. */
+  readonly quiet: boolean;
 }
 
 export class UsageError extends Error {}
@@ -176,10 +178,12 @@ export function parseArguments(argv: readonly string[], now: () => Date = () => 
     format,
     engine,
     confidenceThreshold,
+    quiet: flags.has("--quiet"),
   };
 }
 
 const KNOWN_FLAGS = new Set([
+  "--quiet",
   "--publish",
   "--draft-pr",
   "--allow-transitive",

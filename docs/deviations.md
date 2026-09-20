@@ -611,3 +611,30 @@ So the runner compiles with a checkpointer and recovers the last committed state
 exhausted, classifies it as blocked with the reason, and writes the full artifact set. The
 checkpointer is in-process and is not there for resuming across restarts; it is there so state
 remains readable after an invoke throws.
+
+## A run says what it is doing while it does it
+
+The command printed nothing until it finished. On the fixtures that is a few seconds; on a
+repository with a real suite it is minutes of an install, a test run, and registry fetches, with no
+way to tell a slow install from a hang.
+
+The runner streams instead of invoking, and reports one line per node. Two decisions in it.
+
+The lines go to stderr. Stdout carries the report, `--format json` is meant to be piped into
+something that parses it, and the summary line was already on stderr. A reader watching a terminal
+sees both; a pipeline sees neither. `--quiet` turns them off.
+
+Each line is about the node it names, which means differencing against the previous superstep
+rather than reporting a total. State channels accumulate, so an implementer following a test author
+that wrote two files reported six files changed when it had written four — a true number attached to
+the wrong step. Taking the difference costs holding one reference and makes the trace readable as a
+sequence of steps rather than a set of totals.
+
+Streaming also changed where the final state comes from. `stream` yields per superstep and does not
+accumulate a result, so the run now reads its final state from the checkpointer — the same read the
+superstep-budget recovery makes, so there is one path for both rather than two.
+
+Both stream modes are subscribed, for one reason each: `updates` names the node that just ran, and
+`values` carries the accumulated state in plain form. An update reports a reducer wrapper rather
+than a value for any overwrite channel, and reading around that to render a progress line would
+mean progress code that knows about reducer internals.

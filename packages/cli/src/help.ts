@@ -24,6 +24,8 @@ Options
   --allow-transitive          Permit a transitive dependency to move as a consequence.
   --partial-allowed           Exit 0 on a partial result instead of 2.
   --format markdown|json      What to print. Default: markdown.
+  --quiet                     Do not print per-step progress. Progress goes to
+                              stderr, so stdout stays parseable either way.
   --engine jev|deterministic  Who chooses the next step. Default: deterministic, which
                               makes the route a pure function of run state. jev needs
                               TYPESAFE_API_KEY.
