@@ -187,6 +187,15 @@ describe("the workflow it writes", () => {
     expect(workflowFor(context("npm"), ["install"])).toContain("npm ci");
   });
 
+  it("grants itself no more than read access", () => {
+    // Inheriting the repository default would hand a write-capable token to a job that
+    // runs the repository's own build script.
+    const yaml = workflowFor(context("npm"), ["install", "test"]);
+    expect(yaml).toContain("permissions:\n  contents: read");
+    // No scope is granted write anywhere, however the block is spelled.
+    expect(yaml).not.toMatch(/^\s*[a-z-]+:\s*write/m);
+  });
+
   it("is readable by the tool that reads existing workflows", () => {
     // Otherwise the re-assessment after writing would report the same gap forever.
     const yaml = workflowFor(context("npm"), ["install", "test", "build"]);
