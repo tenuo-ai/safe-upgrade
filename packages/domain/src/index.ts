@@ -66,3 +66,5 @@ export {
 
 export type { VersionRelation } from "./version.ts";
 export { relateVersions } from "./version.ts";
+
+export { count } from "./plural.ts";

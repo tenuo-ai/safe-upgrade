@@ -13,6 +13,7 @@
  * cannot settle is reported as uncertainty rather than as an absence of problems.
  */
 
+import { count } from "@safe-upgrade/domain";
 import type { MigrationFinding } from "@safe-upgrade/domain";
 import type { PublishedShape } from "@safe-upgrade/tools";
 import type { MemberReference } from "./members.ts";
@@ -73,6 +74,10 @@ export function deriveFindings(input: DerivationInput): Derivation {
       requiredChange:
         `Each require() of ${input.packageName} has to become an import. Converting a file to ESM changes how the whole file loads, so its own exports and its relative requires move with it, and every module that loads it is affected in turn.`,
       confidence: 1,
+      // Every file in the package moves together, and a package's tests are among its files.
+      // The implementer may not write tests, so this finding takes two workers in a fixed
+      // order, which routing enforces rather than prefers.
+      spansTestFiles: true,
     });
   }
 
@@ -133,7 +138,7 @@ export function deriveFindings(input: DerivationInput): Derivation {
   for (const [member, references] of byMember) {
     findings.push({
       id: `export-removed-at-target:${member}`,
-      releaseClaim: `${input.packageName} ${input.currentVersion} exports ${member}, and ${input.targetVersion} does not. This repository reaches it in ${String(references.length)} place(s).`,
+      releaseClaim: `${input.packageName} ${input.currentVersion} exports ${member}, and ${input.targetVersion} does not. This repository reaches it in ${count(references.length, "place")}.`,
       evidenceIds: cite,
       affectedSymbols: [`${input.packageName}.${member}`],
       affectedFiles: unique(references.map((reference) => reference.file)),

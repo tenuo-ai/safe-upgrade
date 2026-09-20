@@ -11,6 +11,7 @@
  * rather than a state machine: the first eligible action wins.
  */
 
+import { count } from "@safe-upgrade/domain";
 import type { RoutableAction } from "@safe-upgrade/domain";
 import type { RouteInput } from "./contract.ts";
 
@@ -39,7 +40,7 @@ function preferenceOrder(input: RouteInput): readonly { action: RoutableAction; 
   if (unverified.length > 0) {
     preferences.push({
       action: "author_tests",
-      reason: `${unverified.length} finding(s) have no verification path`,
+      reason: `${count(unverified.length, "finding")} ${unverified.length === 1 ? "has" : "have"} no verification path`,
     });
   }
 
@@ -60,7 +61,7 @@ function preferenceOrder(input: RouteInput): readonly { action: RoutableAction; 
   if (input.unresolvedFindings.length > 0) {
     preferences.push({
       action: "implement",
-      reason: `${input.unresolvedFindings.length} finding(s) are unresolved`,
+      reason: `${count(input.unresolvedFindings.length, "finding")} ${input.unresolvedFindings.length === 1 ? "is" : "are"} unresolved`,
     });
   }
 

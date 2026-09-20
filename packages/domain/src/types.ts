@@ -94,6 +94,20 @@ export interface MigrationFinding {
   /** Set when research concludes only a manifest and lockfile change is needed. */
   readonly noSourceChangeRequired?: boolean;
   /**
+   * Set when the change this finding calls for reaches test files.
+   *
+   * The implementer may not write tests, so a finding like this one cannot be discharged by a
+   * single worker: the test author has to move its files first, or the implementer converts the
+   * source, the tests go on loading it the old way, and verification fails for a reason that has
+   * nothing to do with whether the upgrade works.
+   *
+   * Recorded here so that routing can enforce the order instead of preferring it. A live model
+   * asked to choose between migrating and covering picked migrating with high confidence, which
+   * turned a run that reaches `verified` into one that reports `blocked` — the cost of the choice
+   * is not visible in anything the engine is shown, so the choice should not be offered.
+   */
+  readonly spansTestFiles?: boolean;
+  /**
    * A runtime version range something outside the source has to satisfy.
    *
    * Carried structurally rather than left for a later worker to read back out of

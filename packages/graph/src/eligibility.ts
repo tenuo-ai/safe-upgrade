@@ -7,7 +7,7 @@
  * wording that gets `publish_draft` offered before verification passed.
  */
 
-import { describeElevation, grantFor } from "@safe-upgrade/domain";
+import { count, describeElevation, grantFor } from "@safe-upgrade/domain";
 import type { ElevationGrant, RoutableAction } from "@safe-upgrade/domain";
 import type { RouteCandidate } from "@safe-upgrade/jev";
 import { ACTION_WORKER, TRANSITIONS } from "./transitions.ts";
@@ -66,7 +66,7 @@ const RULES: readonly Rule[] = [
       if (state.testAssessment?.sufficient === true) {
         return null;
       }
-      return `${uncovered.length} finding(s) lack a verification path`;
+      return `${count(uncovered.length, "finding")} ${uncovered.length === 1 ? "lacks" : "lack"} a verification path`;
     },
   },
   {
@@ -81,12 +81,29 @@ const RULES: readonly Rule[] = [
       // all the way through routing, wrote a CI workflow, and finished without ever touching
       // the manifest. Real repositories showed this plainly: the patch contained a workflow
       // and no version change at all.
+      // A finding whose change reaches test files needs the test author first.
+      //
+      // The implementer converts source and may not write tests, so going first leaves the
+      // package half in each module system and fails a verification round for a reason that has
+      // nothing to do with the upgrade. The deterministic order already preferred coverage here,
+      // but a preference is only as good as whatever is doing the choosing: a live model, offered
+      // the same two actions, picked migrating with 0.85 to 0.98 confidence, and the run that
+      // reaches `verified` under the deterministic order came out `blocked`.
+      //
+      // So it is a constraint rather than a preference. Trusted code knows the cost, and nothing
+      // in what the engine is shown could tell it.
+      if (
+        !testsChanged(state) &&
+        unresolvedFindings(state).some((finding) => finding.spansTestFiles === true)
+      ) {
+        return null;
+      }
       if (!state.dependencyMoved) {
         return "the dependency has not been moved to the target version yet";
       }
       const unresolved = unresolvedFindings(state);
       if (unresolved.length > 0) {
-        return `${unresolved.length} finding(s) are not yet implemented`;
+        return `${count(unresolved.length, "finding")} ${unresolved.length === 1 ? "is" : "are"} not yet implemented`;
       }
       if (state.lastVerification === "failed") {
         return "verification failed and the implementation may need revision";

@@ -201,6 +201,45 @@ describe("engine responses", () => {
     expect(route.worker).toBe(ACTION_WORKER.implement);
   });
 
+  it("does not offer migrating a finding whose change reaches test files", async () => {
+    // Not a preference here but a constraint, and the difference is what a live model made of
+    // it. Offered `implement` and `author_tests` for an ESM break, the engine picked migrating
+    // with 0.85 to 0.98 confidence across every phrasing of the state it was shown — and the
+    // run that reaches `verified` under the deterministic order came out `blocked`, because the
+    // implementer converted the source while the tests went on loading it the old way. The cost
+    // is invisible in anything the engine sees, so the choice is not offered.
+    const engine = new FakeDecisionEngine({
+      script: [{ kind: "choose", action: "implement", confidence: 0.98 }],
+    });
+    const spanning = { ...finding("f1"), spansTestFiles: true };
+    const route = await decideRoute(
+      stateWithChoices({ dependencyMoved: false, findings: [spanning] }),
+      { engine, config, audit },
+    );
+
+    expect(route.decision.candidates).not.toContain("implement");
+    expect(route.decision.selected).toBe("author_tests");
+  });
+
+  it("offers it again once the tests have moved", async () => {
+    const engine = new FakeDecisionEngine();
+    const spanning = { ...finding("f1"), spansTestFiles: true };
+    const route = await decideRoute(
+      stateWithChoices({
+        dependencyMoved: false,
+        findings: [spanning],
+        verifiedFindingIds: ["f1"],
+        testAssessment: { sufficient: true, uncoveredFindings: [], rationale: "covered" },
+        fileChanges: [
+          { path: "test/f1.test.js", beforeHash: null, afterHash: null, owner: "test_author", reason: "cover f1" },
+        ],
+      }),
+      { engine, config, audit },
+    );
+
+    expect(route.decision.selected).toBe("implement");
+  });
+
   it("still covers an unverified finding before moving anything", async () => {
     // The move outranks CI and verification, not coverage. The implementer migrates source in
     // the same visit that it moves the dependency, so going first would convert the source

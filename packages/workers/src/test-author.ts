@@ -14,6 +14,7 @@
  * is a claim about a test that has not been executed yet.
  */
 
+import { count } from "@safe-upgrade/domain";
 import type { FileChange, MigrationFinding, TestAssessment } from "@safe-upgrade/domain";
 import type { UpgradeStateUpdate, WorkerFn, WorkerInput } from "@safe-upgrade/graph";
 import { inWorktree, type RunContext } from "./context.ts";
@@ -56,7 +57,7 @@ async function assess(input: WorkerInput, context: RunContext): Promise<UpgradeS
     uncoveredFindings: uncovered,
     rationale:
       uncovered.length === 0
-        ? `every affected file is reachable from ${String(graph.testFiles.length)} test file(s)`
+        ? `every affected file is reachable from ${count(graph.testFiles.length, "test file")}`
         : explanations.join("; "),
   };
 

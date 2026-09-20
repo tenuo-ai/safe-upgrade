@@ -53,7 +53,16 @@ export function createImplementer(context: RunContext): WorkerFn {
     if (input.state.dependencyMoved && input.state.lastVerification === "failed" && nothingPending(input)) {
       return {
         blockingConditions: [
-          `${context.request.packageName} is at ${context.request.targetVersion} and the checks still fail. No rule here explains the failure, so it is a change in behaviour rather than one in the package's shape, and that needs a person reading the release notes against the failing output.`,
+          // Deliberately not "so it is a change in behaviour". That was the earlier wording, and
+          // a run whose tests had been left in CommonJS reported it — naming a cause this worker
+          // had not established and sending the reader to the release notes for a failure that
+          // was sitting in the diff. What is known is that no rule here applies; what caused the
+          // failure is the question, not the answer.
+          `${context.request.packageName} is at ${context.request.targetVersion} and the checks still fail. No rule here explains why, so this needs a person reading the failing output against the release notes${
+            input.state.highSeverityUncertainty.length > 0
+              ? ", starting with what this run already recorded it could not account for"
+              : ""
+          }.`,
         ],
       };
     }

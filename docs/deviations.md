@@ -363,14 +363,15 @@ fell back on its own would hide from the audit that the engine had failed at all
 transport failure and every unexpected shape becomes a single `DecisionEngineError` and
 leaves the adapter immediately.
 
-## The live service is not exercised
+## The adapter's own tests use a stub
 
-The adapter is tested against a stubbed client. That covers what the adapter is for —
-rejecting a label nobody offered, refusing a partial answer set, keeping the SDK's error
-classes from escaping, and bounding what crosses the wire — but it measures nothing about
-how the real model scores these particular questions. The confidence threshold and the
-yes/no threshold are therefore set from first principles rather than from observation, and
-should be revisited once there is a run against the service to observe.
+The adapter is tested against a stubbed client, and that is deliberate: those tests cover what
+the adapter is for — rejecting a label nobody offered, refusing a partial answer set, keeping the
+SDK's error classes from escaping, and bounding what crosses the wire — and none of it should
+need a network or a key to run in CI.
+
+What a stub cannot measure is how the real model scores these questions. That was measured
+separately, and the results are at the end of this document.
 
 ## What real repositories changed about this design
 
@@ -504,3 +505,34 @@ ordinary cause is a checkout initialised a moment earlier.
 Messages that named a path were naming the temporary worktree, which is deleted when the run
 ends. A reader following one of those went looking for a directory that no longer existed instead
 of at their own checkout.
+
+## What the live engine changed
+
+The adapter had been written and tested against a stub, and the deviations above said plainly that
+the live service was not exercised. It is now, and it found something a stub could not.
+
+The engine is confident. Across ten routing states its reported confidence had a median of 0.97
+and cleared the 0.7 threshold eight times, so it is not a component that sits below the bar and
+never contributes. Its reported confidence is a separate number from the probability mass on the
+chosen label and runs lower — 0.64 against 0.82 on one call — which is worth knowing before
+setting a threshold against it.
+
+Its disagreements with the deterministic order were all one disagreement. Offered `implement` and
+`author_tests` for an ESM break, it chose migrating, four times out of four, at 0.85 to 0.98. That
+is the wrong order, and the reason is not something the engine could have known: the implementer
+converts source and may not write tests, so migrating first leaves the package half in each module
+system. Run with the engine's choices trusted, the fixture that reaches `verified` under the
+deterministic order came out `blocked`.
+
+The fix is not a better prompt or a higher threshold. The order was expressed as a preference in
+the fallback, and a preference is only as good as whatever is doing the choosing. A finding whose
+change reaches test files now says so, and `implement` is ineligible while such a finding is
+unresolved and the tests have not moved. Trusted code knows the cost; nothing in what the engine
+is shown could tell it; so the choice is not offered. With that constraint in place the engine
+reaches `author_tests` on its own, at 0.81 to 0.85, and the run reaches `verified` at either
+threshold.
+
+The same run exposed a message of our own making. The implementer's "nothing left to try" block
+asserted that a failure it could not explain was therefore a change in behaviour — and said so for
+a run whose tests had been left in CommonJS, sending the reader to the release notes for something
+sitting in the diff. It now states what it knows and leaves the cause open.

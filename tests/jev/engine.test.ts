@@ -189,7 +189,7 @@ describe("assessing whether tests cover a break", () => {
     const decision = await engine({ covered: { type: "noul", noul: 0.42 } }).assessTestCoverage(coverage);
     expect(decision.rationale).toContain("0.42");
     expect(decision.rationale).toContain("below the 0.70 threshold");
-    expect(decision.rationale).toContain("1 candidate test(s)");
+    expect(decision.rationale).toContain("1 candidate test");
   });
 });
 

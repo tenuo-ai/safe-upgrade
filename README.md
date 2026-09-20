@@ -76,9 +76,16 @@ trusted a green suite would have reported success on code that does not build.
 The Jev adapter is in place behind the decision-engine contract, and `--engine jev`
 selects it with `TYPESAFE_API_KEY` from the environment. The default is still the
 deterministic priority order, which is a supported configuration rather than a
-placeholder — the route is then a pure function of graph state. What the adapter has
-not had is a run against the live service; it is exercised against a stubbed client,
-so the scoring behaviour of the real model on these questions is unmeasured.
+placeholder — the route is then a pure function of graph state.
+
+It has been run against the live service. The engine is confident on these questions, with
+a median reported confidence of 0.97 across ten routing states, and it contributes real
+choices rather than sitting below the threshold. Its one systematic disagreement with the
+deterministic order was instructive enough to change the design: it preferred migrating a
+break before covering it, which no amount of confidence makes correct, because the
+implementer may not write tests and migrating first leaves a package half in each module
+system. That ordering is now a constraint in eligibility rather than a preference in the
+fallback, so the choice is never offered. `docs/deviations.md` records what was measured.
 
 ## The shape of the security argument
 

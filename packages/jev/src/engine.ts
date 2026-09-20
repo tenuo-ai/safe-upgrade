@@ -24,7 +24,7 @@
  */
 
 import { choice, noul, TypeSafeClient, type EntryType } from "@typesafe-ai/sdk";
-import { DecisionEngineError } from "@safe-upgrade/domain";
+import { count, DecisionEngineError } from "@safe-upgrade/domain";
 import type {
   DecisionEngine,
   MigrationCompletenessDecision,
@@ -132,7 +132,7 @@ export class JevDecisionEngine implements DecisionEngine {
       confidence: answer.noul,
       // Composed here rather than asked for. What the engine produced is a number; this
       // sentence says what the number was about, which is what an audit record needs.
-      rationale: `the engine put the probability that one of the ${String(input.candidateTests.length)} candidate test(s) would fail without the change at ${answer.noul.toFixed(2)}, ${sufficient ? "at or above" : "below"} the ${this.yesThreshold.toFixed(2)} threshold for treating coverage as sufficient`,
+      rationale: `the engine put the probability that one of the ${count(input.candidateTests.length, "candidate test")} would fail without the change at ${answer.noul.toFixed(2)}, ${sufficient ? "at or above" : "below"} the ${this.yesThreshold.toFixed(2)} threshold for treating coverage as sufficient`,
     };
   }
 
