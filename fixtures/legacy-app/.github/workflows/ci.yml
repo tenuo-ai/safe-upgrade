@@ -1,0 +1,19 @@
+# Deliberately incomplete: runs the test suite and never runs the build, so a
+# dependency that breaks `require` at build time would reach main unnoticed.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm test

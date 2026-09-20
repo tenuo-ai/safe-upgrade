@@ -14,6 +14,7 @@
   "devDependencies": {
     "@langchain/langgraph": "1.4.16",
     "@safe-upgrade/authorization": "workspace:*",
+    "@safe-upgrade/bootstrap": "workspace:*",
     "@safe-upgrade/domain": "workspace:*",
     "@safe-upgrade/evidence": "workspace:*",
     "@safe-upgrade/graph": "workspace:*",

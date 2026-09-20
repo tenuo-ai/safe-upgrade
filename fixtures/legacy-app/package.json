@@ -1,0 +1,14 @@
+{
+  "name": "legacy-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Fixture: a CommonJS app pinned to escape-string-regexp 4, which is ESM-only from 5.",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "node --test",
+    "build": "node scripts/build.mjs"
+  },
+  "dependencies": {
+    "escape-string-regexp": "4.0.0"
+  }
+}
