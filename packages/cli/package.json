@@ -1,0 +1,23 @@
+{
+  "name": "@safe-upgrade/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "safe-upgrade": "./bin/safe-upgrade.mjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "dependencies": {
+    "@safe-upgrade/domain": "workspace:*",
+    "@safe-upgrade/runner": "workspace:*",
+    "@safe-upgrade/authorization": "workspace:*"
+  }
+}

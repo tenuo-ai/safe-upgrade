@@ -27,21 +27,25 @@ export abstract class UpgradeError extends Error {
   }
 }
 
+export interface AuthorizationDetail {
+  readonly capability: string;
+  readonly worker: string;
+  readonly code?: string;
+  readonly field?: string;
+}
+
 export class AuthorizationError extends UpgradeError {
   readonly kind = "authorization" as const;
   readonly retryable = false;
+  // Declared and assigned rather than written as a constructor parameter property.
+  // A parameter property is the one piece of TypeScript that cannot be erased — it
+  // *generates* an assignment — so it cannot be run by a runtime that only strips types,
+  // and the CLI ships these sources rather than compiled output.
+  readonly detail: AuthorizationDetail;
 
-  constructor(
-    message: string,
-    readonly detail: {
-      readonly capability: string;
-      readonly worker: string;
-      readonly code?: string;
-      readonly field?: string;
-    },
-    options?: { cause?: unknown },
-  ) {
+  constructor(message: string, detail: AuthorizationDetail, options?: { cause?: unknown }) {
     super(message, options);
+    this.detail = detail;
   }
 }
 

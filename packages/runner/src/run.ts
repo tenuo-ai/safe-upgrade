@@ -14,6 +14,7 @@
 
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
+import { writeArtifacts } from "./artifacts.ts";
 import { join } from "node:path";
 import {
   describeElevation,
@@ -28,7 +29,10 @@ import {
 } from "@safe-upgrade/domain";
 import { AuditLog, type AuditEvent } from "@safe-upgrade/evidence";
 import { detectRepositoryFacts, isolateRepository } from "@safe-upgrade/bootstrap";
-import { createDevAuthorizationRuntime } from "@safe-upgrade/authorization";
+import {
+  createDevAuthorizationRuntime,
+  createProductionAuthorizationRuntime,
+} from "@safe-upgrade/authorization";
 import type { GitHubToolOptions } from "@safe-upgrade/tools";
 import { buildGraph, type RouterConfig, type UpgradeState } from "@safe-upgrade/graph";
 import { DeterministicEngine, type DecisionEngine } from "@safe-upgrade/jev";
@@ -72,7 +76,28 @@ export interface RunOptions {
   readonly publishApproved?: boolean;
   /** Repository and token for the draft pull request. Absent means no publishing. */
   readonly github?: GitHubToolOptions;
+  /**
+   * An externally issued warrant to run under.
+   *
+   * Absent means the development root, which mints its own authority and which Tenuo
+   * refuses outside a development or test environment. Present means this process can
+   * narrow what an issuer granted and cannot grant itself anything — which is the
+   * difference spec 11 draws, so it is a caller's decision rather than a default.
+   *
+   * The key and the secret are named, not passed: the values stay in the environment and
+   * out of this object, which is checkpointed and reported on.
+   */
+  readonly authorization?: ProductionAuthorization;
   readonly clock?: () => Date;
+}
+
+export interface ProductionAuthorization {
+  /** Name of the variable holding the trusted issuer's hex public key. */
+  readonly rootPublicKeyEnv: string;
+  /** The warrant itself, issued by that issuer for this run. */
+  readonly warrant: string;
+  /** Name of the variable holding this holder's secret. */
+  readonly holderSecretEnv: string;
 }
 
 export interface RunReport {
@@ -137,7 +162,7 @@ export async function runUpgrade(options: RunOptions): Promise<RunReport> {
       ...(options.clock === undefined ? {} : { clock: options.clock }),
     });
 
-    const runtime = createDevAuthorizationRuntime({
+    const runtimeOptions = {
       runId,
       worktreeRoot: isolation.worktreePath,
       packageManager: detection.facts.packageManager,
@@ -148,7 +173,12 @@ export async function runUpgrade(options: RunOptions): Promise<RunReport> {
       ...(options.github === undefined ? {} : { github: options.github }),
       targetVersion: options.targetVersion,
       audit,
-    });
+    };
+    // Which root this run trusts, decided here and nowhere else.
+    const runtime =
+      options.authorization === undefined
+        ? createDevAuthorizationRuntime(runtimeOptions)
+        : createProductionAuthorizationRuntime({ ...runtimeOptions, ...options.authorization });
 
     // Everything the workers are told, in one value, all of it produced by
     // trusted code before any worker held a capability.
@@ -207,6 +237,9 @@ export async function runUpgrade(options: RunOptions): Promise<RunReport> {
     if (artifactsDirectory !== undefined) {
       audit.writeArtifact("result.json", `${JSON.stringify(result, null, 2)}\n`);
       audit.writeArtifact("report.md", renderReport(report));
+      // Last, and from the worktree before it is released: the diff is the evidence the
+      // classification is a summary of.
+      writeArtifacts(audit, report, isolation.patch());
     }
     return report;
   } finally {
@@ -278,6 +311,7 @@ export function renderReport(report: RunReport): string {
   );
   section("Residual uncertainty", finalState.highSeverityUncertainty);
   section("Prohibited actions", finalState.prohibitedActions);
+  section("CI that gates these checks, and what else it can do", finalState.ciWorkflowRisks);
 
   // The approval id is the whole point of this section. A run that reports
   // `human_required` and does not say what to approve, or how, has told the reader
@@ -309,12 +343,15 @@ export function renderReport(report: RunReport): string {
     lines.push("## Published", "", `- Draft pull request: ${finalState.draftPullRequestUrl}`, "");
   } else if (finalState.fileChanges.length > 0) {
     // A run that produced a change and did not publish it has left that change in a
-    // worktree that will be removed. Saying where it went matters more than it sounds:
-    // the alternative is a verified result whose work quietly disappears.
+    // worktree that is removed when the run ends. Saying where it survives matters more
+    // than it sounds: the alternative is a verified result whose work quietly disappears.
+    // Deliberately not the worktree path — by the time anyone reads this, it is gone.
     lines.push(
       "## Not published",
       "",
-      `- The change is on \`${report.runBranch}\` in ${facts.worktreePath}, uncommitted.`,
+      report.artifactsDirectory === undefined
+        ? `- The change was made on \`${report.runBranch}\` in a worktree that has since been removed, and no artifact directory was given to keep it in.`
+        : `- The change was made on \`${report.runBranch}\`. The worktree is gone; the diff is in \`${join(report.artifactsDirectory, "patch.diff")}\`.`,
       report.request.createDraftPullRequest
         ? "- Publishing was requested. Re-run with `publishApproved` to commit, push, and open a draft."
         : "- Publishing was not requested, so nothing was pushed and no pull request exists.",

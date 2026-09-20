@@ -20,6 +20,7 @@ import type { UpgradeStateUpdate, WorkerFn, WorkerInput } from "@safe-upgrade/gr
 import { ABSENT } from "@safe-upgrade/tools";
 import { inWorktree, type RunContext } from "./context.ts";
 import { checkOrder } from "./checks.ts";
+import { describeRisks, inspectWorkflow } from "./workflow/inspect.ts";
 
 /**
  * The Node version the generated workflow pins.
@@ -39,21 +40,39 @@ export function createCiAuthor(context: RunContext): WorkerFn {
     const covered = coveredPurposes(existing, context.facts.packageManager);
     const missing = required.filter((purpose) => !covered.has(purpose));
 
+    const credited = creditedRisks(existing, required, context);
+
     if (missing.length === 0) {
       const assessment: CiAssessment = { sufficient: true, missingChecks: [] };
       recordAssessment(input, assessment, existing, []);
-      return { ciAssessment: assessment };
+      return { ciAssessment: assessment, ...(credited.length > 0 ? { ciWorkflowRisks: credited } : {}) };
     }
 
     const relativePath = `.github/workflows/${WORKFLOW_FILE}`;
     const path = inWorktree(context, ".github", "workflows", WORKFLOW_FILE);
     const existingWorkflow = existing.find((workflow) => workflow.path === relativePath);
+    const content = workflowFor(context, required);
+
+    // Checked before it is written, not after. Spec 13.6 requires this workflow to grant
+    // `contents: read`, request no secrets, and add no deploy, release, publish, or write
+    // steps, and a workflow that failed that would be a hole this run had opened itself.
+    // Nothing should ever reach this, which is why it refuses rather than repairs: a
+    // template that drifted is a bug to fix in the template.
+    const selfRisks = inspectWorkflow(relativePath, content, { authored: true });
+    if (selfRisks.length > 0) {
+      return {
+        blockingConditions: [
+          `the workflow this run would add is not safe to add: ${describeRisks(selfRisks).join("; ")}`,
+        ],
+      };
+    }
+
     const written = await input.handle.tools.write_ci_file({
       path,
       // A previous round may have written this file. Its hash rather than `absent`,
       // so a concurrent change is a refusal instead of an overwrite.
       expectedBeforeHash: existingWorkflow?.hash ?? ABSENT,
-      content: workflowFor(context, required),
+      content,
     });
 
     // Re-assessed from what is now on disk rather than assumed, so the claim that CI
@@ -82,6 +101,7 @@ export function createCiAuthor(context: RunContext): WorkerFn {
     return {
       ciAssessment: assessment,
       fileChanges: changes,
+      ...(credited.length > 0 ? { ciWorkflowRisks: credited } : {}),
       // The raised Node floor is discharged here or nowhere: there is no edit that
       // addresses it, only a statement of which version CI runs. Claimed only when
       // the pinned version actually satisfies the floor the researcher found.
@@ -111,11 +131,43 @@ function recordAssessment(
 }
 
 /** Install always counts, plus every check the repository actually defines. */
+/**
+ * Risks in the workflows this run credits with gating a check.
+ *
+ * Scoped to those on purpose. A repository with a deploy workflow is a normal repository,
+ * and reporting it here would be reporting on CI hygiene this upgrade did not cause and
+ * cannot fix. What is worth a reviewer's attention is narrower: when this run says a check
+ * is gated in CI, and that gate also holds write permissions or reads secrets, then
+ * triggering the gate is worth more to an attacker than the check is worth to the reviewer.
+ *
+ * Stated rather than blocking, unlike the workflow this run writes itself.
+ */
+export function creditedRisks(
+  existing: readonly Workflow[],
+  required: readonly CheckPurpose[],
+  context: RunContext,
+): readonly string[] {
+  const statements: string[] = [];
+  for (const workflow of existing) {
+    const covers = coveredPurposes([workflow], context.facts.packageManager);
+    if (!required.some((purpose) => covers.has(purpose))) {
+      continue;
+    }
+    const risks = inspectWorkflow(workflow.path, workflow.content, { authored: false });
+    for (const statement of describeRisks(risks)) {
+      statements.push(
+        `${statement}, and this run credits it with gating ${[...covers].sort().join(", ")}`,
+      );
+    }
+  }
+  return statements;
+}
+
 function requiredPurposes(context: RunContext): readonly CheckPurpose[] {
   return ["install", ...checkOrder(context.checkScripts).map(({ purpose }) => purpose)];
 }
 
-interface Workflow {
+export interface Workflow {
   readonly path: string;
   readonly hash: string;
   readonly content: string;

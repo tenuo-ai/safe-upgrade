@@ -97,8 +97,12 @@ export interface MigrationFinding {
 
 export type CheckOutcome = "passed" | "failed" | "timed_out" | "not_run";
 
+/** Which pass a check belongs to, which is what spec 22 groups the check records by. */
+export type CheckPhase = "baseline" | "focused" | "final";
+
 export interface CheckResult {
   readonly command: CommandSpec;
+  readonly phase: CheckPhase;
   readonly exitCode: number | null;
   readonly startedAt: string;
   readonly durationMs: number;

@@ -1,5 +1,6 @@
 export type {
   CheckOutcome,
+  CheckPhase,
   CheckPurpose,
   CheckResult,
   CiAssessment,

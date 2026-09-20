@@ -131,6 +131,11 @@ export const UpgradeStateAnnotation = Annotation.Root({
   blockingConditions: append<string>(),
   highSeverityUncertainty: append<string>(),
   prohibitedActions: append<string>(),
+  /**
+   * Risks in the workflows the run credits with gating a check. Reported, never a reason
+   * to stop: pre-existing CI hygiene is not this upgrade's doing.
+   */
+  ciWorkflowRisks: append<string>(),
   pendingApprovals: union(),
   /**
    * Calls a worker asked a human to approve. Append-only: a request that was

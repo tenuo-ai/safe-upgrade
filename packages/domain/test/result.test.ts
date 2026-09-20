@@ -5,6 +5,7 @@ import type { CheckResult } from "../src/types.ts";
 function check(purpose: CheckResult["command"]["purpose"], outcome: CheckResult["outcome"]): CheckResult {
   return {
     command: { executable: "pnpm", args: ["run", purpose], cwd: "/tmp/wt", purpose, timeoutMs: 1000 },
+    phase: "final",
     exitCode: outcome === "passed" ? 0 : 1,
     startedAt: "2026-01-01T00:00:00.000Z",
     durationMs: 10,

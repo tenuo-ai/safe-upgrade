@@ -115,6 +115,73 @@ describeE2E("an upgrade that needs approval to proceed", () => {
     });
   });
 
+  describe("the record it leaves on disk", () => {
+    /**
+     * Spec 22. A classification is a summary of a change, so the artifacts have to contain
+     * the change itself and the inputs it was derived from, not only the conclusion.
+     */
+    const read = (name: string): string => readFileSync(join(artifacts, "approved", name), "utf8");
+    const readJson = (name: string): unknown => JSON.parse(read(name));
+
+    it("writes every file spec 22 names", () => {
+      for (const name of [
+        "request.json",
+        "repository-facts.json",
+        "release-evidence.json",
+        "findings.json",
+        "route-history.json",
+        "authorization-events.jsonl",
+        "audit.jsonl",
+        "patch.diff",
+        "report.json",
+        "report.md",
+      ]) {
+        expect(() => read(name), name).not.toThrow();
+      }
+    });
+
+    it("records the diff a reviewer would read, not just a summary of it", () => {
+      const patch = read("patch.diff");
+      // The manifest edit that needed approval, the source migration, and the test the run
+      // wrote, which is untracked and would be missing from a plain `git diff`.
+      expect(patch).toMatch(/^\+\s*"type": "module",$/m);
+      expect(patch).toMatch(/^-const escapeStringRegexp = require\("escape-string-regexp"\);$/m);
+      expect(patch).toMatch(/^\+import escapeStringRegexp from "escape-string-regexp";$/m);
+      expect(patch).toMatch(/new file mode/);
+      expect(patch).toMatch(/b\/test\/highlight\.load\.test\.js/);
+    });
+
+    it("groups the check records by the pass that ran them", () => {
+      // Baseline and final are distinct claims: one says the repository was sound before,
+      // the other says it is sound after, and a reviewer needs to tell them apart.
+      const baseline = readJson("checks/baseline/01-install.json") as { phase: string };
+      const final = readJson("checks/final/01-install.json") as { phase: string; outcome: string };
+      expect(baseline.phase).toBe("baseline");
+      expect(final.phase).toBe("final");
+      expect(final.outcome).toBe("passed");
+    });
+
+    it("writes the inputs the findings were derived from, not only the findings", () => {
+      const evidence = readJson("release-evidence.json") as readonly { id: string }[];
+      const findings = readJson("findings.json") as readonly { evidenceIds: readonly string[] }[];
+      expect(findings.length).toBeGreaterThan(0);
+      // Every citation resolves to a document in the same directory.
+      const ids = new Set(evidence.map((record) => record.id));
+      for (const finding of findings) {
+        for (const id of finding.evidenceIds) {
+          expect(ids, id).toContain(id);
+        }
+      }
+    });
+
+    it("writes the route history, so the path taken can be read back", () => {
+      const history = readJson("route-history.json") as readonly { selected: string }[];
+      expect(history.map((entry) => entry.selected)).toEqual(
+        approved.finalState.routeHistory.map((entry) => entry.selected),
+      );
+    });
+  });
+
   describe("the run that was approved", () => {
     it("granted exactly one call, to exactly one worker", () => {
       const grants = approved.events.filter((event) => event.type === "elevation_granted");

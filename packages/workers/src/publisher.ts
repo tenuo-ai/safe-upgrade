@@ -195,6 +195,10 @@ function limitations(context: RunContext, input: WorkerInput): readonly string[]
   if (state.ciAssessment?.sufficient !== true) {
     claims.push("CI does not run every check this change was verified against");
   }
+  for (const risk of state.ciWorkflowRisks) {
+    // A reviewer weighing a green tick should know what else the workflow behind it can do.
+    claims.push(`the CI gating this change is not read-only: ${risk}`);
+  }
   if (!context.sourceClean) {
     claims.push("the checkout this run started from had uncommitted changes, which are not part of this branch");
   }

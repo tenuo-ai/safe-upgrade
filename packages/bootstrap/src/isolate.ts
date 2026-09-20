@@ -46,6 +46,15 @@ export interface Isolation {
    * was not what was verified.
    */
   readonly sourceClean: boolean;
+  /**
+   * Everything this run changed, as a unified diff against the commit it started from.
+   *
+   * The whole change whether or not it was committed: new files are staged
+   * intent-to-add first, because a test the run wrote is part of what a reviewer has to
+   * read and `git diff` alone would not mention it. Reading this is safe at any point —
+   * it touches the run's worktree, never the user's checkout.
+   */
+  patch(): string;
   /** Remove the worktree. Leaves the user's checkout untouched. */
   release(): void;
 }
@@ -150,6 +159,16 @@ export function isolateRepository(request: IsolationRequest): Isolation {
     defaultBranch,
     runBranch,
     sourceClean,
+    patch(): string {
+      // Against the run's worktree, so deliberately not through `gitRead`: that guard
+      // exists to keep the user's checkout limited to three read verbs, and widening it
+      // for a diff taken somewhere else would weaken it for no reason.
+      //
+      // Intent-to-add rather than a real add, so the index still describes the same tree
+      // and a commit the publisher makes later is unaffected.
+      git(canonicalWorktree, ["add", "--all", "--intent-to-add"]);
+      return git(canonicalWorktree, ["diff", "--no-color", startCommit]);
+    },
     release(): void {
       if (released) {
         return;

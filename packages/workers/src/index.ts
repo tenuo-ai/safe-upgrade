@@ -1,6 +1,7 @@
 import type { WorkerRegistry } from "@safe-upgrade/graph";
 import type { RunContext } from "./context.ts";
 import { createCiAuthor } from "./ci-author.ts";
+export type { Workflow } from "./ci-author.ts";
 import { createImplementer } from "./implementer.ts";
 import { createPublisher } from "./publisher.ts";
 import { createInspector } from "./inspector.ts";
@@ -13,6 +14,7 @@ export { inWorktree } from "./context.ts";
 export {
   createCiAuthor,
   coveredPurposes,
+  creditedRisks,
   dischargedByWorkflow,
   lowestAdmitted,
   satisfies,
@@ -50,3 +52,5 @@ export function createWorkerRegistry(context: RunContext): WorkerRegistry {
 }
 export { findMemberReferences, readBindings } from "./research/members.ts";
 export type { MemberReference } from "./research/members.ts";
+export { describeRisks, inspectWorkflow } from "./workflow/inspect.ts";
+export type { InspectOptions, WorkflowRisk, WorkflowRiskKind } from "./workflow/inspect.ts";

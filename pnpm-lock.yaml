@@ -17,6 +17,9 @@ importers:
       '@safe-upgrade/bootstrap':
         specifier: workspace:*
         version: link:packages/bootstrap
+      '@safe-upgrade/cli':
+        specifier: workspace:*
+        version: link:packages/cli
       '@safe-upgrade/domain':
         specifier: workspace:*
         version: link:packages/domain
@@ -74,6 +77,18 @@ importers:
       '@safe-upgrade/tools':
         specifier: workspace:*
         version: link:../tools
+
+  packages/cli:
+    dependencies:
+      '@safe-upgrade/authorization':
+        specifier: workspace:*
+        version: link:../authorization
+      '@safe-upgrade/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@safe-upgrade/runner':
+        specifier: workspace:*
+        version: link:../runner
 
   packages/domain:
     dependencies:

@@ -6,7 +6,7 @@
  * token echoed by a failing command to end up.
  */
 
-import type { CheckPurpose, CheckResult, WorkerId } from "@safe-upgrade/domain";
+import type { CheckPhase, CheckPurpose, CheckResult, WorkerId } from "@safe-upgrade/domain";
 import type { CheckKind } from "@safe-upgrade/tools";
 import type { AuditLog } from "@safe-upgrade/evidence";
 import type { CommandOutcome } from "@safe-upgrade/tools";
@@ -17,6 +17,10 @@ export function recordCheck(
   phase: "baseline_verify" | "verify" | "implement" | "author_tests",
   outcome: CommandOutcome,
 ): CheckResult {
+  // Named for what the pass is, not for which worker ran it: a reviewer grouping check
+  // records wants the baseline, the focused runs, and the final verification apart.
+  const group: CheckPhase =
+    phase === "baseline_verify" ? "baseline" : phase === "verify" ? "final" : "focused";
   const purpose = outcome.command.purpose;
   const slug = `${phase}-${purpose}-${String(outcome.startedAt).replace(/[:.]/g, "-")}`;
   const stdout = audit.writeArtifact(`checks/${slug}.stdout.txt`, outcome.stdout);
@@ -43,6 +47,7 @@ export function recordCheck(
 
   return {
     command: outcome.command,
+    phase: group,
     exitCode: outcome.exitCode,
     startedAt: outcome.startedAt,
     durationMs: outcome.durationMs,
