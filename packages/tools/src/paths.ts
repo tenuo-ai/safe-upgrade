@@ -11,7 +11,7 @@
  */
 
 import { realpathSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { ToolExecutionError } from "@safe-upgrade/domain";
 
 export type FileClass = "source" | "test" | "ci" | "manifest" | "lockfile" | "sensitive";
@@ -63,20 +63,31 @@ function isInside(root: string, candidate: string): boolean {
 }
 
 /**
- * Resolve the closest existing ancestor through symlinks. A path that does not
- * exist yet still has to land inside the root once its parent is resolved,
- * which is how we stop a write through a symlinked directory.
+ * Resolve the closest existing ancestor through symlinks, keeping the part below it.
+ *
+ * A path that does not exist yet still has to land inside the root once its parent is resolved,
+ * which is how a write through a symlinked directory is stopped.
+ *
+ * The remainder is collected while walking up rather than recomputed afterwards. Deriving it
+ * from the resolved ancestor instead produced a path that pointed back through the symlink: for
+ * `alias/a.js` where `alias` links to `src`, the ancestor resolves to `src`, and the relative
+ * step from `src` to `alias/a.js` is `../alias/a.js`, which rebuilds the very link that was
+ * just resolved. The write still landed on the right file, because the operating system
+ * followed the link again, but the path recorded in the audit and the diff was not the file
+ * that changed.
  */
-function realAncestor(path: string): string {
+function realAncestor(path: string): { readonly resolved: string; readonly tail: readonly string[] } {
   let current = path;
+  const tail: string[] = [];
   for (;;) {
     try {
-      return realpathSync(current);
+      return { resolved: realpathSync(current), tail: [...tail].reverse() };
     } catch {
       const parent = dirname(current);
       if (parent === current) {
         throw new ToolExecutionError(`cannot resolve any ancestor of ${path}`);
       }
+      tail.push(basename(current));
       current = parent;
     }
   }
@@ -110,12 +121,11 @@ export function resolveInsideRoot(context: PathContext, candidate: string): Reso
   // The path may not exist yet, so resolve the deepest ancestor that does and
   // re-append the remainder. Either the target or its parent chain is a symlink
   // out of the tree, and this catches both.
-  const existing = realAncestor(normalized);
+  const { resolved: existing, tail } = realAncestor(normalized);
   if (!isInside(context.realRoot, existing)) {
     throw new ToolExecutionError(`path resolves outside the worktree root: ${candidate}`);
   }
-  const tail = relative(existing, normalized);
-  const absolute = tail.length === 0 ? existing : resolve(existing, tail);
+  const absolute = tail.length === 0 ? existing : join(existing, ...tail);
   if (!isInside(context.realRoot, absolute)) {
     throw new ToolExecutionError(`path resolves outside the worktree root: ${candidate}`);
   }
@@ -129,6 +139,23 @@ export function resolveInsideRoot(context: PathContext, candidate: string): Reso
 }
 
 /**
+ * Whether one path segment is a protected directory.
+ *
+ * Compared without case, and with trailing dots and spaces removed, because the name in the
+ * path and the directory it opens are not the same question. macOS and Windows both resolve
+ * `.Git` to `.git`, so an exact-match set let `.Git/hooks/pre-commit` through as ordinary
+ * source — a file git executes on the next commit. Windows additionally ignores trailing dots
+ * and spaces, which makes `.git.` another spelling of the same directory.
+ *
+ * On a case-sensitive filesystem this refuses a `.GIT` directory that really is distinct. That
+ * is a trade worth making: nobody keeps source in one, and the alternative is a rule whose
+ * correctness depends on which filesystem the run happens to land on.
+ */
+function isSensitiveSegment(part: string): boolean {
+  return SENSITIVE_SEGMENT.has(part.replace(/[. ]+$/, "").toLowerCase());
+}
+
+/**
  * Classify a repository-relative path. Order matters: sensitive wins over
  * everything, then CI, then tests, so that a workflow file under a `tests/`
  * directory is still treated as CI.
@@ -137,10 +164,14 @@ export function classifyPath(relativePath: string): FileClass {
   const parts = segments(relativePath);
   const name = parts.at(-1) ?? "";
 
-  if (parts.some((part) => SENSITIVE_SEGMENT.has(part)) || SENSITIVE_FILE.test(name)) {
+  if (parts.some(isSensitiveSegment) || SENSITIVE_FILE.test(name)) {
     return "sensitive";
   }
-  if (parts[0] === ".github" && parts[1] === "workflows" && WORKFLOW_FILE.test(name)) {
+  // Anything inside `.github/workflows`, at any depth and under any name. Only files directly
+  // in that directory are ones GitHub runs, but classifying the rest as something else meant a
+  // nested path fell through to the test rules and became writable by the test author. Keeping
+  // the whole directory to one capability is simpler than a rule about which depths execute.
+  if (parts[0] === ".github" && parts[1] === "workflows") {
     return "ci";
   }
   if (LOCKFILE_NAMES.has(name)) {

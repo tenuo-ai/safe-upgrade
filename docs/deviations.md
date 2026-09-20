@@ -438,3 +438,24 @@ output this run captures and writes to disk. Both processes that touch the publi
 get the scratch directory as their home, which is deleted with everything else in it. The cost
 is a cold npm cache for that install and no access to a private registry configured in the
 user's `.npmrc`; reading a published version's export list needs neither.
+
+## A protected directory is protected in every spelling
+
+Attacking the path resolver found one live hole. Protected directories were matched by exact
+string against a set, so `.Git/hooks/pre-commit` was classified as ordinary source and was
+writable by the implementer. On macOS and on Windows that path opens `.git/hooks/pre-commit`,
+which git executes on the next commit. Segments are now matched without case, and with trailing
+dots and spaces stripped, because Windows ignores those too.
+
+The same pass found two smaller things. The whole of `.github/workflows` is now one capability
+at any depth: a nested path under it used to fall through to the test rules and come back as
+`test`, which would have let the test author write inside the directory CI is read from. And the
+resolved path is now rebuilt from the segments walked past rather than from a relative step off
+the resolved ancestor — the old form pointed back through a symlink it had just resolved, so a
+write through an in-tree link landed on the right file but was recorded under the wrong path.
+
+One thing the attacks confirmed rather than changed: a traversal is collapsed textually before
+any link is followed, so `src/away/../../src/a.js` resolves to `src/a.js` even when `src/away`
+points out of the tree. That differs from what the kernel would open if it walked the link, and
+the difference is always in the safe direction — the collapsed path is the one operated on, and
+the link that would have led out is gone before anything opens a file.
