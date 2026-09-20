@@ -97,6 +97,38 @@ describe("attenuation only ever narrows", () => {
     );
     expect(written.fileClass).toBe("source");
   });
+
+  /**
+   * Read from the session rather than from the profile we passed in. Asking the
+   * profile what it requested only proves we can echo our own arguments back.
+   */
+  it("delegates to leaves that cannot delegate again", async () => {
+    const { broker } = harness.runtime;
+    for (const worker of ["researcher", "implementer", "publisher"] as const) {
+      const granted = await broker.withWorker(worker, "research", async (handle) => {
+        expect(handle.worker).toBe(worker);
+        return handle.grant;
+      });
+      expect(granted.terminal).toBe(true);
+      expect(granted.depth).toBe(1);
+      expect(granted.canAuthorize).toBe(true);
+    }
+  });
+
+  it("gives every worker a shorter life than the run that delegated to it", async () => {
+    const { broker, parentSession, profiles } = harness.runtime;
+    const parentExpiry = parentSession.inspect().expiresAt;
+    for (const worker of ["researcher", "verifier", "publisher"] as const) {
+      const granted = await broker.withWorker(worker, "research", async (handle) =>
+        handle.grant,
+      );
+      expect(granted.expiresAt).toBeLessThanOrEqual(parentExpiry);
+      // Near enough to the profile's TTL to show the narrow honoured it rather
+      // than silently inheriting the parent's remaining hour.
+      const lifetime = granted.expiresAt - Math.floor(Date.now() / 1000);
+      expect(lifetime).toBeLessThanOrEqual(profiles[worker].ttlSeconds);
+    }
+  });
 });
 
 describe("registry", () => {

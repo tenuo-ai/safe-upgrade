@@ -14,7 +14,13 @@ import { AuthorizationError } from "@safe-upgrade/domain";
 import type { Phase, WorkerId } from "@safe-upgrade/domain";
 import type { AuditLog } from "@safe-upgrade/evidence";
 import { sha256Canonical, sha256Hex } from "@safe-upgrade/evidence";
-import { AuthorizationDeniedError, type ProtectedTool, type Session, type Tenuo } from "@tenuo/core";
+import {
+  AuthorizationDeniedError,
+  type ProtectedTool,
+  type Session,
+  type SessionInfo,
+  type Tenuo,
+} from "@tenuo/core";
 import type { Capability } from "./capabilities.ts";
 import type { WorkerProfile } from "./profiles.ts";
 import { SessionRegistry } from "./session-registry.ts";
@@ -28,6 +34,12 @@ export interface WorkerHandle {
   /** Opaque lookup key. Safe to place in graph state; resolves only in memory. */
   readonly sessionRef: string;
   readonly capabilities: readonly Capability[];
+  /**
+   * What the session says it granted: holder, depth, terminal, expiry, tools.
+   * A read-only snapshot, deliberately not the session — a worker that could
+   * reach the session could narrow it or put it on the wire.
+   */
+  readonly grant: SessionInfo;
   /**
    * Call a protected tool as this worker. Authorization runs first, so a denial
    * never reaches the tool body.
@@ -78,8 +90,18 @@ export class DelegationBroker {
   ): Promise<T> {
     const profile = this.profiles[worker];
     const capabilities = Object.keys(profile.allow) as Capability[];
-    const childSession = this.tenuo.narrow(this.parentSession, profile.allow);
+    const childSession = this.tenuo.narrow(this.parentSession, profile.allow, {
+      // Every worker is a leaf. No worker spawns anything, so none of them needs
+      // to delegate, and a session that cannot delegate cannot be the start of a
+      // chain nobody planned.
+      terminal: true,
+      // Clamped to the parent's remaining lifetime, so this only ever shortens.
+      ttlSeconds: profile.ttlSeconds,
+    });
     const sessionRef = this.registry.register(worker, childSession, profile.ttlSeconds);
+    // Read back what was actually granted rather than what we asked for, so the
+    // audit trail records the session's own account of itself.
+    const granted = childSession.inspect();
 
     this.audit.record({
       phase,
@@ -92,6 +114,10 @@ export class DelegationBroker {
         capabilities,
         ttlSeconds: profile.ttlSeconds,
         rationale: profile.rationale,
+        depth: granted.depth,
+        terminal: granted.terminal,
+        expiresAt: granted.expiresAt,
+        grantedTools: granted.tools,
       },
     });
 
@@ -99,6 +125,7 @@ export class DelegationBroker {
       worker,
       sessionRef,
       capabilities,
+      grant: granted,
       invoke: (capability, tool, args) =>
         this.invokeAs(worker, phase, sessionRef, childSession, capability, tool, args),
     };

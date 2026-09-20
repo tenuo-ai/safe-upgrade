@@ -49,7 +49,7 @@ time.
 exactly the union of the ceilings, so the maximum authority of the whole run is
 one object you can read.
 
-**The decision engine chooses, it never authorizes.** The router computes the
+**The decision engine chooses, but it doesn't authorizes.** The router computes the
 eligible actions deterministically, the engine picks one from that exact list, the
 response is validated against the same list, and trusted code maps the chosen
 action to a worker. An engine that returns an action nobody offered is rejected
@@ -57,7 +57,7 @@ rather than retried, and a low-confidence answer is replaced by a fixed priority
 order. There is no wording that gets `publish_draft` offered before verification
 passed, and no response that supplies a worker identity.
 
-A few consequences worth stating plainly:
+A few consequences:
 
 - No profile can enable dependency lifecycle scripts. That is a human decision,
   and the run reports `human_required` instead of granting it.

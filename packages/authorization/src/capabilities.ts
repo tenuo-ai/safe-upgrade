@@ -15,8 +15,7 @@
  */
 
 import { join } from "node:path";
-import { exact, max, oneOf, pattern, under, type ConstraintExpr } from "@tenuo/core";
-import { semver, urlSafe } from "./constraints.ts";
+import { exact, max, oneOf, regex, under, urlSafe, wildcard, type ConstraintExpr } from "@tenuo/core";
 import type {
   BranchArgs,
   CreateDraftPrArgs,
@@ -95,10 +94,17 @@ export interface CeilingContext {
   readonly maxCommandTimeoutMs: number;
 }
 
-/** Any string, including empty and multi-line. Narrowing still applies. */
-const anyText = () => pattern("*");
+/**
+ * Named but unconstrained, which is the only way to leave an argument open in a
+ * closed-world policy. `wildcard()` rather than `pattern("*")`: the glob is a
+ * match over the whole value and says "any shape", where this says "any value at
+ * all", which is what is meant for a file body or a PR description.
+ */
+const anyText = () => wildcard();
 
 const ALL_CHECK_KINDS = ["test", "typecheck", "lint", "build"] as const;
+
+const SEMVER = String.raw`^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$`;
 
 /**
  * The widest allowed form of every capability. A run's parent session is minted
@@ -149,8 +155,10 @@ export function capabilityCeilings(context: CeilingContext): Ceilings {
 
     read_registry_metadata: {
       packageName: exact(context.requestedPackage),
-      // A version, not a path segment smuggled into the registry URL.
-      version: semver(),
+      // A version, not a path segment smuggled into the registry URL. A glob
+      // cannot express this: `*` matches `/`, so `pattern("*.*.*")` accepts
+      // `../../../etc/passwd`.
+      version: regex(SEMVER),
     },
     // The only network capability, so the host allowlist and the SSRF blocking
     // belong here rather than only in the tool body.
