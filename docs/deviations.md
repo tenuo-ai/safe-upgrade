@@ -459,3 +459,31 @@ any link is followed, so `src/away/../../src/a.js` resolves to `src/a.js` even w
 points out of the tree. That differs from what the kernel would open if it walked the link, and
 the difference is always in the safe direction — the collapsed path is the one operated on, and
 the link that would have led out is gone before anything opens a file.
+
+## The codemod is checked against generated input, by Node
+
+Three bugs in the ESM transform survived a suite of chosen examples and were found within
+minutes of generating input from fragments of real CommonJS. Each produced a file that does not
+parse or does not load, which is the worst failure available to a codemod: the run afterwards
+reports a syntax error rather than anything about the upgrade.
+
+`const { readFile: read } = require(...)` became `import { readFile: read } from ...`.
+Destructuring renames with a colon, importing renames with `as`, and carrying the pattern across
+unchanged is a syntax error rather than a different meaning. An existing test asserted the broken
+output as correct, which is what an example-based suite does when the person writing the examples
+shares the misunderstanding.
+
+`var os = require("node:os")` twice in a file became two identical imports, and
+`module.exports = { a }` twice became two identical exports. Both inputs are legal CommonJS —
+`var` redeclares, and the second assignment replaces the first — and both outputs are rejected
+outright. Every line converted correctly and the file still did not load, so the check for it is
+over the whole result rather than in any of the rules that produce it.
+
+`exports = something` was left alone, because the refusal patterns looked for `exports.` with a
+dot. In a module that line assigns to a name nothing declares: valid syntax, no export, and a
+`ReferenceError` at run time rather than a parse error anyone would notice in review.
+
+The property is judged by running `node --check` on the output as a `.mjs` file, and the input is
+first checked as `.cjs` so that the transform is not held to account for files that never parsed.
+A regular expression asserting the output "looks like" a module would be the same kind of
+reasoning that produced the output, and could agree with the same mistake.

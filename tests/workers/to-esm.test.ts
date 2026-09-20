@@ -37,8 +37,33 @@ describe("forms it converts", () => {
     expect(converted(`const { a, b } = require("./x.js");\n`)).toBe(`import { a, b } from "./x.js";\n`);
   });
 
-  it("keeps a renaming binding as written", () => {
-    expect(converted(`const { a: b } = require("./x.js");\n`)).toBe(`import { a: b } from "./x.js";\n`);
+  it("translates a renaming binding into the notation an import uses", () => {
+    // Destructuring renames with a colon and importing renames with `as`. Carrying the pattern
+    // across unchanged produced `import { a: b }`, which is not a different meaning but a syntax
+    // error, in a file that then failed every check with a parse error rather than anything about
+    // the upgrade. A generated-input property test found it; every example here had a plain
+    // binding.
+    expect(converted(`const { a: b } = require("./x.js");\n`)).toBe(`import { a as b } from "./x.js";\n`);
+  });
+
+  it("refuses a destructuring an import clause cannot express", () => {
+    for (const source of [
+      `const { a = 1 } = require("./x.js");\n`,
+      `const { a: { b } } = require("./x.js");\n`,
+      `const { ...rest } = require("./x.js");\n`,
+    ]) {
+      expect(convertToEsm(source).kind, source).toBe("refused");
+    }
+  });
+
+  it("refuses a file that would declare or export one name twice", () => {
+    // Legal CommonJS in both cases — `var` redeclares, and a second `module.exports` assignment
+    // replaces the first — and a module rejects both. Every line converts correctly and the file
+    // still does not load, which is why the check is over the whole result.
+    const twoImports = `var os = require("node:os");\nvar os = require("node:os");\n`;
+    expect(convertToEsm(twoImports).kind).toBe("refused");
+    const twoExports = `const a = 1;\nmodule.exports = { a };\nmodule.exports = { a };\n`;
+    expect(convertToEsm(twoExports).kind).toBe("refused");
   });
 
   it("rewrites a bare require to a side-effect import", () => {

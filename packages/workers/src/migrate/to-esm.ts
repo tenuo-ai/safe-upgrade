@@ -59,6 +59,10 @@ const REFUSE: readonly { readonly pattern: RegExp; readonly reason: string }[] =
   { pattern: /\brequire\.(?:resolve|cache|main)\b/, reason: "uses a `require` property that does not exist in ESM" },
   { pattern: /\b__dirname\b|\b__filename\b/, reason: "uses `__dirname` or `__filename`, which need `import.meta.url` and a judgement about what the path meant" },
   { pattern: /\brequire\s*\(/, reason: "calls `require` in a form this transform does not recognise, such as conditionally or with a computed path" },
+  // Reached only for lines no rewrite above consumed. Left alone, `exports = x` survives into a
+  // module as an assignment to a name nothing declares: valid syntax, no export, and a
+  // ReferenceError at run time rather than a parse error anyone would notice in review.
+  { pattern: /\bexports\s*=/, reason: "assigns to `exports` as a whole, which in a module is an undeclared variable rather than an export" },
 ];
 
 export function convertToEsm(source: string): ConversionResult {
@@ -117,17 +121,107 @@ export function convertToEsm(source: string): ConversionResult {
   if (!changed) {
     return { kind: "unchanged" };
   }
+
+  // Checked on the output, because nothing above has a view of the whole file.
+  const duplicate = duplicateBinding(output);
+  if (duplicate !== null) {
+    return { kind: "refused", refusals: [duplicate] };
+  }
+
   return { kind: "converted", result: { converted: trimLeadingBlanks(output).join("\n"), applied } };
+}
+
+/**
+ * The property a line-by-line transform cannot check for itself.
+ *
+ * Two CommonJS forms are legal repeated and illegal once converted. `var os = require("os")`
+ * twice is fine, because `var` redeclares; two `import os from "os"` is a duplicate declaration.
+ * `module.exports = { a }` twice is fine, because the second assignment replaces the first; two
+ * `export { a }` is a duplicate export. In both cases every line was converted correctly and the
+ * file still does not load, so the check belongs here, over the result, rather than in any of the
+ * rules that produced it.
+ */
+function duplicateBinding(lines: readonly string[]): Refusal | null {
+  const declared = new Set<string>();
+  const exported = new Set<string>();
+
+  for (const [index, line] of lines.entries()) {
+    const at = (name: string, kind: "declare" | "export"): Refusal => ({
+      line: index + 1,
+      reason:
+        kind === "declare"
+          ? `would declare '${name}' twice, which CommonJS allows through \`var\` and a module rejects outright`
+          : `would export '${name}' twice, which CommonJS allows by overwriting and a module rejects outright`,
+      excerpt: line.trim().slice(0, 240),
+    });
+
+    for (const name of importedNames(line)) {
+      if (declared.has(name)) {
+        return at(name, "declare");
+      }
+      declared.add(name);
+    }
+
+    const names = exportedNames(line);
+    if (/^\s*export\s+default\b/.test(line)) {
+      names.push("default");
+    }
+    for (const name of names) {
+      if (exported.has(name)) {
+        return at(name, "export");
+      }
+      exported.add(name);
+    }
+  }
+  return null;
+}
+
+/** The local names an `import` statement brings into scope. */
+function importedNames(line: string): string[] {
+  const clause = /^\s*import\s+(.+?)\s+from\s+['"]/.exec(line)?.[1];
+  if (clause === undefined) {
+    // `import "m"` declares nothing.
+    return [];
+  }
+  const braced = /\{([^}]*)\}/.exec(clause);
+  if (braced === null) {
+    return [clause.trim()];
+  }
+  return (braced[1] ?? "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .map((part) => {
+      const renamed = /\bas\s+([A-Za-z_$][\w$]*)$/.exec(part);
+      return renamed?.[1] ?? part;
+    });
+}
+
+/** The names an `export { ... }` clause introduces, after any `as`. */
+function exportedNames(line: string): string[] {
+  const inner = /^\s*export\s*\{([^}]*)\}/.exec(line)?.[1] ?? "";
+  return inner
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .map((part) => {
+      const renamed = /\bas\s+([A-Za-z_$][\w$]*)$/.exec(part);
+      return renamed?.[1] ?? part;
+    });
 }
 
 function rewrite(code: string, original: string): { readonly text: string; readonly form: string } | null {
   const named = NAMED_IMPORT.exec(code);
   if (named !== null) {
     const bindings = normalizeBindings(named[2] ?? "{}");
-    return {
-      text: `${named[1] ?? ""}import ${bindings} from ${JSON.stringify(named[4] ?? "")};`,
-      form: "named require to named import",
-    };
+    // A pattern an import clause cannot express falls through to the refusal backstop below,
+    // which still sees the `require` on this line.
+    if (bindings !== null) {
+      return {
+        text: `${named[1] ?? ""}import ${bindings} from ${JSON.stringify(named[4] ?? "")};`,
+        form: "named require to named import",
+      };
+    }
   }
 
   const singular = DEFAULT_IMPORT.exec(code);
@@ -175,14 +269,46 @@ function rewrite(code: string, original: string): { readonly text: string; reado
   return null;
 }
 
-/** `{a, b: c}` becomes `{ a, b: c }`, which is what an import statement wants. */
-function normalizeBindings(bindings: string): string {
+/**
+ * Turn a destructuring pattern into an import clause.
+ *
+ * The two notations are not interchangeable, which is the whole reason this function exists.
+ * Destructuring renames with a colon and importing renames with `as`, so carrying the pattern
+ * across unchanged turned `const { readFile: read } = require(...)` into
+ * `import { readFile: read } from ...` — not a different meaning but a syntax error, in a file
+ * that then failed every check with a parse error rather than anything about the upgrade.
+ *
+ * Returns null for a pattern with no single answer. A default value or a nested pattern is
+ * destructuring an object at runtime, and an import clause cannot express either, so the caller
+ * refuses the line rather than approximating it.
+ */
+function normalizeBindings(bindings: string): string | null {
   const inner = bindings.replace(/^\{|\}$/g, "").trim();
   const parts = inner
     .split(",")
     .map((part) => part.trim())
     .filter((part) => part.length > 0);
-  return `{ ${parts.join(", ")} }`;
+  if (parts.length === 0) {
+    return null;
+  }
+
+  const clauses: string[] = [];
+  for (const part of parts) {
+    const plain = /^([A-Za-z_$][\w$]*)$/.exec(part);
+    if (plain !== null) {
+      clauses.push(plain[1] ?? "");
+      continue;
+    }
+    const renamed = /^([A-Za-z_$][\w$]*)\s*:\s*([A-Za-z_$][\w$]*)$/.exec(part);
+    if (renamed !== null) {
+      clauses.push(`${renamed[1] ?? ""} as ${renamed[2] ?? ""}`);
+      continue;
+    }
+    // A default (`{ a = 1 }`), a rest element, a nested pattern, or a computed key. Each is a
+    // runtime operation on an object, and an import clause is not one.
+    return null;
+  }
+  return `{ ${clauses.join(", ")} }`;
 }
 
 function trimLeadingBlanks(lines: readonly string[]): readonly string[] {
