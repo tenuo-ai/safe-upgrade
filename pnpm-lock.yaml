@@ -86,6 +86,9 @@ importers:
       '@safe-upgrade/domain':
         specifier: workspace:*
         version: link:../domain
+      '@safe-upgrade/jev':
+        specifier: workspace:*
+        version: link:../jev
       '@safe-upgrade/runner':
         specifier: workspace:*
         version: link:../runner
@@ -131,6 +134,9 @@ importers:
       '@safe-upgrade/domain':
         specifier: workspace:*
         version: link:../domain
+      '@typesafe-ai/sdk':
+        specifier: 0.6.0
+        version: 0.6.0
       zod:
         specifier: 3.25.76
         version: 3.25.76
@@ -534,6 +540,10 @@ packages:
 
   '@types/node@22.20.4':
     resolution: {integrity: sha512-zJRE40jpHtKqE/C4fgHrAKQLJuSpzEnP9ff9Y7YtoR3Wd2pwqzlekDeEuUQXjRd+QCYnVnNwuJYmhdk9XV8gvA==}
+
+  '@typesafe-ai/sdk@0.6.0':
+    resolution: {integrity: sha512-IddX+Q0XM+VagOUZFeP7wZjaO4SHMdvnh2zEBdrZZnXedWI3BNK1lKhMx3ayrkFWvVLbVcUHJy6AVZlY+e6Jaw==}
+    engines: {node: '>=20'}
 
   '@vitest/expect@3.2.7':
     resolution: {integrity: sha512-E8eBXaKibuvH2pSZErOjdVb5vF4PbKYcrnluBTYxEk1l/VhhwZg1kZQsdtjq+CsF5CFydf2Rdkz7jDHKSisi3w==}
@@ -1075,6 +1085,8 @@ snapshots:
   '@types/node@22.20.4':
     dependencies:
       undici-types: 6.21.0
+
+  '@typesafe-ai/sdk@0.6.0': {}
 
   '@vitest/expect@3.2.7':
     dependencies:

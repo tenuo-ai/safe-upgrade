@@ -16,8 +16,9 @@
     "node": ">=22.18"
   },
   "dependencies": {
+    "@safe-upgrade/authorization": "workspace:*",
     "@safe-upgrade/domain": "workspace:*",
-    "@safe-upgrade/runner": "workspace:*",
-    "@safe-upgrade/authorization": "workspace:*"
+    "@safe-upgrade/jev": "workspace:*",
+    "@safe-upgrade/runner": "workspace:*"
   }
 }

@@ -73,9 +73,12 @@ look. That is the point of the fixture: its test suite *passes* at the target
 version, because the only covered call site is one that survives, so a run that
 trusted a green suite would have reported success on code that does not build.
 
-Not built yet: the Jev SDK adapter. With no engine configured the router uses the
+The Jev adapter is in place behind the decision-engine contract, and `--engine jev`
+selects it with `TYPESAFE_API_KEY` from the environment. The default is still the
 deterministic priority order, which is a supported configuration rather than a
-placeholder — the route is then a pure function of graph state.
+placeholder — the route is then a pure function of graph state. What the adapter has
+not had is a run against the live service; it is exercised against a stubbed client,
+so the scoring behaviour of the real model on these questions is unmeasured.
 
 ## The shape of the security argument
 

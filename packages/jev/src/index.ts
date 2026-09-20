@@ -19,3 +19,6 @@ export type { FakeDecisionEngineOptions, ScriptedResponse } from "./fake.ts";
 export { FakeDecisionEngine } from "./fake.ts";
 
 export { DeterministicEngine } from "./deterministic.ts";
+
+export { JevDecisionEngine } from "./engine.ts";
+export type { JevEngineOptions } from "./engine.ts";

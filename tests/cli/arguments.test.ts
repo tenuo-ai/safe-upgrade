@@ -146,6 +146,39 @@ describe("the rest of the command line", () => {
   });
 });
 
+describe("who chooses the next step", () => {
+  it("defaults to the deterministic order", () => {
+    // A supported configuration rather than a placeholder: the route is then a pure function
+    // of run state, which is the more defensible default for anything automated.
+    expect(parse("p@1.0.0").engine).toBe("deterministic");
+  });
+
+  it("takes jev when asked for explicitly", () => {
+    expect(parse("p@1.0.0", "--engine", "jev").engine).toBe("jev");
+  });
+
+  it("refuses an engine it does not have", () => {
+    expect(() => parse("p@1.0.0", "--engine", "gpt")).toThrow(/jev or deterministic/);
+  });
+
+  it("refuses the api key as a flag, like every other secret", () => {
+    expect(() => parse("p@1.0.0", "--typesafe-key", "sk_live")).toThrow(/shell history/);
+  });
+
+  it("takes a confidence threshold and bounds it", () => {
+    expect(parse("p@1.0.0", "--confidence", "0.85").confidenceThreshold).toBeCloseTo(0.85);
+    // The empty string is the one that mattered: Number("") is 0, which would have meant
+    // never replacing the engine's answer.
+    for (const bad of ["1.5", "-0.1", "high", "", "0.5x", "1e-1"]) {
+      expect(() => parse("p@1.0.0", "--confidence", bad), bad).toThrow(UsageError);
+    }
+  });
+
+  it("leaves the threshold alone when not given, rather than inventing one", () => {
+    expect(parse("p@1.0.0").confidenceThreshold).toBeUndefined();
+  });
+});
+
 describe("what the shell learns from the exit code", () => {
   const report = (status: RunReport["result"]["status"]): RunReport =>
     ({

@@ -33,6 +33,9 @@ export interface ParsedArguments {
   readonly allowTransitive: boolean;
   readonly partialAllowed: boolean;
   readonly format: "markdown" | "json";
+  readonly engine: "jev" | "deterministic";
+  /** Below this, the engine's answer is replaced by the deterministic order. */
+  readonly confidenceThreshold: number | undefined;
 }
 
 export class UsageError extends Error {}
@@ -48,6 +51,7 @@ const GITHUB_REPOSITORY = /^[\w.-]+\/[\w.-]+$/;
 /** Flags that would put a credential in argv, refused by name so the refusal is legible. */
 const SECRET_FLAGS = new Set([
   "--github-token",
+  "--typesafe-key",
   "--token",
   "--api-key",
   "--typesafe-api-key",
@@ -63,6 +67,8 @@ const TAKES_VALUE = new Set([
   "--approved-by",
   "--github-repository",
   "--format",
+  "--engine",
+  "--confidence",
 ]);
 
 export function parseArguments(argv: readonly string[], now: () => Date = () => new Date()): ParsedArguments {
@@ -133,6 +139,26 @@ export function parseArguments(argv: readonly string[], now: () => Date = () => 
     throw new UsageError(`--format must be markdown or json, not ${format}`);
   }
 
+  const engine = values.get("--engine") ?? "deterministic";
+  if (engine !== "jev" && engine !== "deterministic") {
+    throw new UsageError(`--engine must be jev or deterministic, not ${engine}`);
+  }
+
+  const confidence = values.get("--confidence");
+  let confidenceThreshold: number | undefined;
+  if (confidence !== undefined) {
+    // The text is checked before the number, because `Number("")` is 0 — and a threshold of
+    // zero means never replacing the engine's answer, which is the opposite of what someone
+    // fumbling an empty argument wanted.
+    if (!/^\d(?:\.\d+)?$/.test(confidence)) {
+      throw new UsageError(`--confidence must be a number between 0 and 1, not ${confidence || "an empty value"}`);
+    }
+    confidenceThreshold = Number(confidence);
+    if (confidenceThreshold > 1) {
+      throw new UsageError(`--confidence must be between 0 and 1, not ${confidence}`);
+    }
+  }
+
   const artifacts = values.get("--artifacts");
   return {
     repositoryPath: resolve(values.get("--repository") ?? process.cwd()),
@@ -148,6 +174,8 @@ export function parseArguments(argv: readonly string[], now: () => Date = () => 
     allowTransitive: flags.has("--allow-transitive"),
     partialAllowed: flags.has("--partial-allowed"),
     format,
+    engine,
+    confidenceThreshold,
   };
 }
 

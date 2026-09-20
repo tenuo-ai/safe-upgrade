@@ -16,6 +16,7 @@ import type { RunStatus } from "@safe-upgrade/domain";
 import { renderReport, runUpgrade, type RunOptions, type RunReport } from "@safe-upgrade/runner";
 import { parseArguments, UsageError, wantsHelp, wantsVersion, type ParsedArguments } from "./arguments.ts";
 import { chooseAuthorization } from "./authorization.ts";
+import { DeterministicEngine, JevDecisionEngine } from "@safe-upgrade/jev";
 import { HELP, VERSION } from "./help.ts";
 
 export interface Streams {
@@ -135,6 +136,10 @@ function toRunOptions(
   }
 
   return {
+    engine: buildEngine(parsed, streams),
+    ...(parsed.confidenceThreshold === undefined
+      ? {}
+      : { router: { confidenceThreshold: parsed.confidenceThreshold } }),
     repositoryPath: parsed.repositoryPath,
     packageName: parsed.packageName,
     targetVersion: parsed.targetVersion,
@@ -151,6 +156,26 @@ function toRunOptions(
       ? { github: { repository: parsed.githubRepository, token } }
       : {}),
   };
+}
+
+/**
+ * Who chooses the next step.
+ *
+ * The deterministic engine is the default, and it is a supported configuration rather than a
+ * placeholder: with it, the route is a pure function of run state, which is the more
+ * defensible position for anything automated. Asking for `jev` is asking for a judgement, so
+ * it is explicit, and the key comes from the environment.
+ */
+function buildEngine(parsed: ParsedArguments, streams: Streams) {
+  if (parsed.engine === "deterministic") {
+    return new DeterministicEngine();
+  }
+  if ((streams.env["TYPESAFE_API_KEY"] ?? "") === "") {
+    throw new UsageError(
+      "--engine jev needs TYPESAFE_API_KEY in the environment. It is not accepted as a flag.",
+    );
+  }
+  return new JevDecisionEngine();
 }
 
 function messageOf(error: unknown): string {

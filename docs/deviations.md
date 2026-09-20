@@ -332,3 +332,42 @@ arguments it takes, which is why a major bump with an unchanged export surface s
 reports that its call sites were not assessed — now saying that the exports were compared
 and none this repository uses were removed, which is a narrower and more useful statement
 than the one it replaces.
+
+## The engine writes no prose, so the rationale is ours
+
+Spec 10.1 gives `assessTestCoverage` a `rationale` string, and the natural reading is
+that the engine explains itself. The adapter does not ask it to. `systemOne` answers
+bounded questions — a label from a list, or a probability — and an explanation would be
+generated text, which spec 10.4 puts outside what this project acts on. So the rationale
+is composed in trusted code from the question asked and the number returned: what the
+probability was about, what the threshold was, and which side of it the answer fell on.
+That is what an audit record needs. It is deliberately not a model's account of its own
+reasoning, because such an account is unfalsifiable and would read, in a pull request, as
+evidence.
+
+## Completeness is asked one finding at a time
+
+Spec 10.4 lists "whether the evidence and patch address every identified migration
+concern" as a single judgment. The adapter asks one yes/no per finding instead, in one
+round trip. A single answer over a set can say that something is unaddressed but not
+which thing, and the finding id is the only part a worker can act on. The set's
+confidence is then the weakest of the answers rather than their average, because a set is
+no more addressed than its least addressed member.
+
+## The adapter neither retries nor falls back
+
+Both belong to the router, which already implements spec 10.3: one retry for a malformed
+answer, the deterministic order after that, and the confidence threshold on top. An
+adapter that also retried would turn one attempt into four without saying so, and one that
+fell back on its own would hide from the audit that the engine had failed at all. So every
+transport failure and every unexpected shape becomes a single `DecisionEngineError` and
+leaves the adapter immediately.
+
+## The live service is not exercised
+
+The adapter is tested against a stubbed client. That covers what the adapter is for —
+rejecting a label nobody offered, refusing a partial answer set, keeping the SDK's error
+classes from escaping, and bounding what crosses the wire — but it measures nothing about
+how the real model scores these particular questions. The confidence threshold and the
+yes/no threshold are therefore set from first principles rather than from observation, and
+should be revisited once there is a run against the service to observe.

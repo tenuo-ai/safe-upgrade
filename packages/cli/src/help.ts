@@ -24,11 +24,17 @@ Options
   --allow-transitive          Permit a transitive dependency to move as a consequence.
   --partial-allowed           Exit 0 on a partial result instead of 2.
   --format markdown|json      What to print. Default: markdown.
+  --engine jev|deterministic  Who chooses the next step. Default: deterministic, which
+                              makes the route a pure function of run state. jev needs
+                              TYPESAFE_API_KEY.
+  --confidence <0..1>         Below this, the engine's answer is replaced by the
+                              deterministic order and the route says so. Default: 0.6.
   --version, --help
 
 Environment
   GITHUB_TOKEN                Required for publishing. Never accepted as a flag: an
                               argument ends up in shell history and in process listings.
+  TYPESAFE_API_KEY            Required by --engine jev. Never accepted as a flag.
   TENUO_ROOT_PUBLIC_KEY       The issuer this run trusts.
   TENUO_RUN_WARRANT           The warrant this run holds.
   TENUO_RUN_HOLDER_SECRET     The secret proving it holds it.
