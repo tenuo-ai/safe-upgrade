@@ -583,3 +583,31 @@ reporting that nobody looked.
 The remaining limit is the note has to be retrievable. GitHub allows sixty unauthenticated requests
 an hour, and a run that exceeds it reports that no note was retrieved — which is true, and is not
 the same claim as no note existing.
+
+## The superstep budget is stated, and exhausting it is survivable
+
+LangGraph counts one superstep per node and stops at twenty-five when the caller passes nothing.
+This graph's own limits allow more than that. Every routed action costs two nodes — the route that
+chose it and the worker that ran it — and `maxWorkerAttempts` is a cap per worker rather than for
+the run, so seven routable actions at three attempts each is forty-two nodes before the four that
+run outside the loop.
+
+Nothing failed, which is why it went unnoticed for so long. Real runs settle in nine to eleven
+supersteps, so neither ceiling was ever approached. What made it invisible rather than merely
+untested is that the two callers disagreed: the test harness passed sixty and the runner passed
+nothing, so the configuration that shipped was the one no test exercised. A run that used its
+retries would have failed in production with a `GraphRecursionError` and the suite would have
+stayed green.
+
+The budget is now derived from the attempt cap in one place that both callers use, so raising
+retries raises it too. Reaching it is a defect in the eligibility rules rather than a condition to
+plan for — the caps are what stop a run — but it is now survivable, which matters because of where
+it would have happened. `writeArtifacts` runs after the graph returns, and reads the diff from a
+worktree released in a `finally`. A throw there took `patch.diff` and the changes with it,
+permanently, on exactly the runs that had done the most work. Only `audit.jsonl` survived, because
+it appends as it goes.
+
+So the runner compiles with a checkpointer and recovers the last committed state when the budget is
+exhausted, classifies it as blocked with the reason, and writes the full artifact set. The
+checkpointer is in-process and is not there for resuming across restarts; it is there so state
+remains readable after an invoke throws.

@@ -9,6 +9,7 @@
  */
 
 import { MemorySaver } from "@langchain/langgraph";
+import { superstepBudget } from "../../packages/graph/src/build-graph.ts";
 import type {
   CheckPurpose,
   CheckResult,
@@ -34,7 +35,9 @@ export interface GraphHarness {
   /** Node names in the order they executed. */
   readonly visited: WorkerId[];
   readonly phases: string[];
-  run(request?: Partial<UpgradeRequest>): Promise<GraphRunResult>;
+  run(request?: Partial<UpgradeRequest>, limit?: number): Promise<GraphRunResult>;
+  /** The last committed state, which is what the runner reads after a budget is exhausted. */
+  committedState(): Promise<UpgradeState>;
   cleanup(): void;
 }
 
@@ -142,7 +145,11 @@ export function createGraphHarness(options: GraphHarnessOptions = {}): GraphHarn
     engine,
     visited,
     phases,
-    async run(request = {}) {
+    /**
+     * `limit` exists for the one test that has to reach the ceiling on purpose. Everything else
+     * leaves it alone and spends what production spends.
+     */
+    async run(request = {}, limit?: number) {
       const fullRequest: UpgradeRequest = {
         runId: base.runId,
         repositoryPath: base.root,
@@ -154,13 +161,21 @@ export function createGraphHarness(options: GraphHarnessOptions = {}): GraphHarn
       };
       const state = await graph.invoke(
         { request: fullRequest },
-        { configurable: { thread_id: base.runId }, recursionLimit: 60 },
+        // The budget production spends, not a generous number. A limit of sixty here while the
+        // runner passed none is how the default of twenty-five went unnoticed.
+        {
+          configurable: { thread_id: base.runId },
+          recursionLimit: limit ?? superstepBudget(config.maxWorkerAttempts),
+        },
       );
       for (const decision of state.routeHistory) {
         phases.push(decision.selected);
       }
       return { status: state.result?.status, state };
     },
+    /** The last committed state, which is what the runner reads after a budget is exhausted. */
+    committedState: async () =>
+      (await graph.getState({ configurable: { thread_id: base.runId } })).values as UpgradeState,
     cleanup: () => base.cleanup(),
   };
 }

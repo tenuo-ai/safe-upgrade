@@ -22,6 +22,6 @@ export type { Route, RouterConfig, RouterOptions } from "./router.ts";
 export { buildRouteInput, decideRoute } from "./router.ts";
 
 export type { NodeDependencies, WorkerFn, WorkerInput, WorkerRegistry } from "./nodes.ts";
-export { createNodes } from "./nodes.ts";
+export { classificationInput, createNodes } from "./nodes.ts";
 
-export { buildGraph } from "./build-graph.ts";
+export { buildGraph, superstepBudget } from "./build-graph.ts";

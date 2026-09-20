@@ -30,13 +30,21 @@ import {
   type UpgradeRequest,
 } from "@safe-upgrade/domain";
 import { AuditLog, type AuditEvent } from "@safe-upgrade/evidence";
+import { classifyRun } from "@safe-upgrade/domain";
 import { detectRepositoryFacts, isolateRepository } from "@safe-upgrade/bootstrap";
 import {
   createDevAuthorizationRuntime,
   createProductionAuthorizationRuntime,
 } from "@safe-upgrade/authorization";
 import type { GitHubToolOptions } from "@safe-upgrade/tools";
-import { buildGraph, type RouterConfig, type UpgradeState } from "@safe-upgrade/graph";
+import { GraphRecursionError, MemorySaver } from "@langchain/langgraph";
+import {
+  buildGraph,
+  classificationInput,
+  superstepBudget,
+  type RouterConfig,
+  type UpgradeState,
+} from "@safe-upgrade/graph";
 import { DeterministicEngine, type DecisionEngine } from "@safe-upgrade/jev";
 import { createWorkerRegistry } from "@safe-upgrade/workers";
 
@@ -224,12 +232,13 @@ export async function runUpgrade(options: RunOptions): Promise<RunReport> {
       detectionWarnings: detection.warnings,
     });
 
+    const routerConfig = { ...DEFAULT_ROUTER, ...options.router };
     const graph = buildGraph({
       runtime,
       engine: options.engine ?? new DeterministicEngine(),
       audit,
       workers,
-      config: { ...DEFAULT_ROUTER, ...options.router },
+      config: routerConfig,
       // A check the repository does not define cannot be required. Requiring a
       // typecheck of a repository with no typecheck script would report a missing
       // gate as a failure of this run.
@@ -237,12 +246,28 @@ export async function runUpgrade(options: RunOptions): Promise<RunReport> {
       partialAllowed: options.partialAllowed ?? true,
       ...(options.approvals === undefined ? {} : { elevationGrants: options.approvals }),
       ...(options.clock === undefined ? {} : { clock: options.clock }),
-    }).compile();
+      // In process and for this run only. Nothing here resumes a graph across a restart, and the
+      // checkpointer is not for that: it is what makes the last committed state readable after an
+      // invoke throws, which is the difference between a failed run that reports what it did and
+      // one that reports nothing.
+    }).compile({ checkpointer: new MemorySaver() });
 
-    const finalState = (await graph.invoke({
-      request,
-      ...(options.publishApproved === true ? { approvalGranted: true } : {}),
-    })) as UpgradeState;
+    const invocation = {
+      configurable: { thread_id: runId },
+      recursionLimit: superstepBudget(routerConfig.maxWorkerAttempts),
+    };
+
+    const classification = {
+      requiredCheckPurposes: requiredPurposes(detection.checkScripts),
+      partialAllowed: options.partialAllowed ?? true,
+      ...(options.clock === undefined ? {} : { clock: options.clock }),
+    };
+    const finalState = await runGraph(
+      graph,
+      invocation,
+      { request, ...(options.publishApproved === true ? { approvalGranted: true } : {}) },
+      classification,
+    );
 
     const result = finalState.result;
     if (result === null) {
@@ -275,6 +300,48 @@ export async function runUpgrade(options: RunOptions): Promise<RunReport> {
     return report;
   } finally {
     isolation.release();
+  }
+}
+
+type CompiledGraph = ReturnType<ReturnType<typeof buildGraph>["compile"]>;
+type Invocation = {
+  readonly configurable: { readonly thread_id: string };
+  readonly recursionLimit: number;
+};
+
+/**
+ * Run the graph, and recover the last committed state if it runs out of supersteps.
+ *
+ * The budget is set above what the attempt caps allow, so reaching it means a rule that should
+ * have stopped the run did not. That is worth reporting as a blocked run rather than as a crash:
+ * the work is already done by then, and `writeArtifacts` runs afterwards from a worktree released
+ * in the `finally` — so throwing here loses `patch.diff` and the diff with it, permanently. The
+ * audit log survives because it appends as it goes, which is the only reason this was visible.
+ */
+async function runGraph(
+  graph: CompiledGraph,
+  invocation: Invocation,
+  input: { readonly request: UpgradeRequest; readonly approvalGranted?: boolean },
+  classification: Parameters<typeof classificationInput>[1],
+): Promise<UpgradeState> {
+  try {
+    return (await graph.invoke(input, invocation)) as UpgradeState;
+  } catch (error) {
+    if (!(error instanceof GraphRecursionError)) {
+      throw error;
+    }
+    const recovered = (await graph.getState(invocation)).values as UpgradeState;
+    const limit = String(invocation.recursionLimit);
+    return {
+      ...recovered,
+      result: classifyRun({
+        ...classificationInput(recovered, classification),
+        blockingConditions: [
+          ...recovered.blockingConditions,
+          `the run reached its limit of ${limit} steps without settling. The attempt caps should have stopped it first, so this is a defect in the routing rules rather than a property of this repository. What it had done by then is in the artifacts.`,
+        ],
+      }),
+    };
   }
 }
 

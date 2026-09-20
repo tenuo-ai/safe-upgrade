@@ -10,7 +10,7 @@ import { END, START, StateGraph } from "@langchain/langgraph";
 import { RepositoryError, type Phase, type WorkerId } from "@safe-upgrade/domain";
 import { UpgradeStateAnnotation, type UpgradeState } from "./state.ts";
 import { createNodes, type NodeDependencies, type WorkerRegistry } from "./nodes.ts";
-import { isLegalTransition, TRANSITIONS } from "./transitions.ts";
+import { isLegalTransition, ROUTABLE_ACTIONS, TRANSITIONS } from "./transitions.ts";
 
 const WORKER_IDS: readonly WorkerId[] = [
   "inspector",
@@ -21,6 +21,29 @@ const WORKER_IDS: readonly WorkerId[] = [
   "verifier",
   "publisher",
 ];
+
+/** `inspect`, `baseline_verify`, `research`, and the `finalize` every run ends at. */
+const PROLOGUE = 4;
+
+/**
+ * The superstep budget a run needs, given what its attempt caps permit.
+ *
+ * LangGraph counts one superstep per node and stops at twenty-five by default, which is a
+ * number chosen for chat agents and is below what this graph's own limits allow: every routed
+ * action costs two nodes, the route that chose it and the worker that ran it, and the attempt cap
+ * applies per worker rather than to the run.
+ *
+ * It was the default until measured, because the test harness passed sixty and production passed
+ * nothing. Short runs finish in nine to eleven supersteps, so nothing failed; a run that used its
+ * retries would have hit the ceiling in production with no test able to see it. Stated here so
+ * both callers spend the same budget, and so raising `maxWorkerAttempts` raises this with it.
+ *
+ * Exceeding it is a bug in the eligibility rules, not a condition to plan for: the caps are what
+ * stop a run, and this is the ceiling above them.
+ */
+export function superstepBudget(maxWorkerAttempts: number): number {
+  return PROLOGUE + 2 * ROUTABLE_ACTIONS.length * maxWorkerAttempts;
+}
 
 /** Reject an incomplete registry at build time rather than mid-run. */
 function assertRegistryComplete(workers: WorkerRegistry): void {

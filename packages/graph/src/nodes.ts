@@ -265,37 +265,7 @@ export function createNodes(dependencies: NodeDependencies): Readonly<Record<Pha
     publish_draft: workerNode("publisher", "publish_draft", "finalize"),
 
     finalize: async (state) => {
-      const requiredPurposes =
-        dependencies.requiredCheckPurposes ?? (["install", "test", "typecheck"] as const);
-      // Only the latest result per purpose counts: a failure that a later round
-      // fixed is history, not an outstanding failure.
-      const requiredChecks = latestChecksByPurpose(state.postChangeChecks).filter((check) =>
-        requiredPurposes.includes(check.command.purpose),
-      );
-      const failedBaselinePurposes = latestChecksByPurpose(state.baselineChecks)
-        .filter((check) => requiredPurposes.includes(check.command.purpose) && check.outcome !== "passed")
-        .map((check) => check.command.purpose);
-
-      const result = classifyRun({
-        baselineKnown: state.baselineChecks.length > 0,
-        failedBaselinePurposes,
-        targetVersionResolved: state.targetVersionResolved,
-        findingIds: state.findings.map((finding) => finding.id),
-        addressedFindingIds: state.addressedFindingIds,
-        verifiedFindingIds: state.verifiedFindingIds,
-        requiredChecks,
-        optionalCheckPurposes: [],
-        diffPolicyPassed: state.diffPolicyPassed,
-        ciSufficient: state.ciAssessment?.sufficient ?? false,
-        highSeverityUncertainty: state.highSeverityUncertainty,
-        blockingConditions: state.blockingConditions,
-        prohibitedActions: state.prohibitedActions,
-        pendingApprovals: state.pendingApprovals,
-        partialAllowed: dependencies.partialAllowed ?? true,
-        evidenceLinks: [],
-        draftPullRequestUrl: state.draftPullRequestUrl,
-        now: (dependencies.clock ?? (() => new Date()))().toISOString(),
-      });
+      const result = classifyRun(classificationInput(state, dependencies));
 
       dependencies.audit.record({
         phase: "finalize",
@@ -310,5 +280,49 @@ export function createNodes(dependencies: NodeDependencies): Readonly<Record<Pha
 
       return { step: 1, phase: "finalize", result };
     },
+  };
+}
+
+/**
+ * The classification input for a state, wherever the state came from.
+ *
+ * Extracted from the finalize node because a run that exhausts its superstep budget never
+ * reaches that node, and the caller recovering its last state has to classify it the same way.
+ * Two copies of this would be two policies.
+ */
+export function classificationInput(
+  state: UpgradeState,
+  dependencies: Pick<NodeDependencies, "requiredCheckPurposes" | "partialAllowed" | "clock">,
+): Parameters<typeof classifyRun>[0] {
+  const requiredPurposes =
+    dependencies.requiredCheckPurposes ?? (["install", "test", "typecheck"] as const);
+  // Only the latest result per purpose counts: a failure that a later round
+  // fixed is history, not an outstanding failure.
+  const requiredChecks = latestChecksByPurpose(state.postChangeChecks).filter((check) =>
+    requiredPurposes.includes(check.command.purpose),
+  );
+  const failedBaselinePurposes = latestChecksByPurpose(state.baselineChecks)
+    .filter((check) => requiredPurposes.includes(check.command.purpose) && check.outcome !== "passed")
+    .map((check) => check.command.purpose);
+
+  return {
+    baselineKnown: state.baselineChecks.length > 0,
+    failedBaselinePurposes,
+    targetVersionResolved: state.targetVersionResolved,
+    findingIds: state.findings.map((finding) => finding.id),
+    addressedFindingIds: state.addressedFindingIds,
+    verifiedFindingIds: state.verifiedFindingIds,
+    requiredChecks,
+    optionalCheckPurposes: [],
+    diffPolicyPassed: state.diffPolicyPassed,
+    ciSufficient: state.ciAssessment?.sufficient ?? false,
+    highSeverityUncertainty: state.highSeverityUncertainty,
+    blockingConditions: state.blockingConditions,
+    prohibitedActions: state.prohibitedActions,
+    pendingApprovals: state.pendingApprovals,
+    partialAllowed: dependencies.partialAllowed ?? true,
+    evidenceLinks: [],
+    draftPullRequestUrl: state.draftPullRequestUrl,
+    now: (dependencies.clock ?? (() => new Date()))().toISOString(),
   };
 }
