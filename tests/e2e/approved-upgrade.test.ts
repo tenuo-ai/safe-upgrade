@@ -141,13 +141,16 @@ describeE2E("an upgrade that needs approval to proceed", () => {
     });
 
     it("attributes every write to the worker that was allowed to make it", () => {
-      for (const change of approved.finalState.fileChanges) {
-        if (change.path.startsWith("test/")) {
-          // Test files are the test author's, by capability and not by convention.
-          expect(change.owner).toBe("test_author");
-        } else {
-          expect(change.owner).toBe("implementer");
+      // Not a convention: each area has exactly one worker holding the capability that
+      // can write it, so the owner recorded here is the only one it could have been.
+      const ownerFor = (path: string): string => {
+        if (path.startsWith("test/")) {
+          return "test_author";
         }
+        return path.startsWith(".github/workflows/") ? "ci_author" : "implementer";
+      };
+      for (const change of approved.finalState.fileChanges) {
+        expect(change.owner).toBe(ownerFor(change.path));
       }
     });
 
@@ -198,6 +201,64 @@ describeE2E("an upgrade that needs approval to proceed", () => {
       expect(repo.git(["rev-parse", "HEAD"])).toBe(repo.headCommit);
       expect(repo.git(["worktree", "list"]).split("\n")).toHaveLength(1);
       expect(readFileSync(join(repo.path, "package.json"), "utf8")).not.toMatch(/"type"/);
+    });
+
+    it("closed the gap between what passed locally and what CI would run", () => {
+      // The fixture's own workflow runs the tests and never the build, on purpose. A
+      // green local build there proves nothing about a merge.
+      const assessment = approved.events.find((event) => event.type === "ci_assessment_recorded");
+      expect(assessment?.payload["wasMissing"]).toEqual(["build"]);
+
+      const workflow = approved.finalState.fileChanges.find(
+        (change) => change.path === ".github/workflows/safe-upgrade-checks.yml",
+      );
+      expect(workflow?.owner).toBe("ci_author");
+      expect(approved.finalState.ciAssessment).toMatchObject({
+        sufficient: true,
+        missingChecks: [],
+      });
+
+      // The existing workflow is left alone. The new checks arrive as a file a reviewer
+      // can read next to it, not as an edit that could have dropped a step.
+      const edited = approved.finalState.fileChanges.filter(
+        (change) => change.path === ".github/workflows/ci.yml",
+      );
+      expect(edited).toEqual([]);
+    });
+
+    it("reached a verified conclusion, with its reasons stated", () => {
+      // This fixture supports every condition `verified` requires, so anything less is
+      // a real gap rather than a limit of the scenario. The one dependency that is not
+      // in this repository's control is the release document: a major bump whose notes
+      // cannot be read is `indeterminate` by design, and saying so here is more useful
+      // than a test that fails when GitHub rate-limits an unauthenticated request.
+      const uncertainty = approved.finalState.highSeverityUncertainty;
+      if (uncertainty.length > 0) {
+        expect(uncertainty.join(" ")).toMatch(/release note|changelog/i);
+        expect(approved.result.status).toBe("indeterminate");
+        return;
+      }
+
+      expect(approved.result.status).toBe("verified");
+      expect(approved.result.reasons).toContain("target version resolved exactly");
+      expect(approved.result.reasons).toContain("CI covers the verified command set");
+      expect(approved.finalState.blockingConditions).toEqual([]);
+
+      // Every finding, including the one no edit can discharge, ends up both addressed
+      // and covered by something that would catch a regression.
+      for (const finding of approved.finalState.findings) {
+        expect(approved.finalState.addressedFindingIds).toContain(finding.id);
+        expect(approved.finalState.verifiedFindingIds).toContain(finding.id);
+      }
+    });
+
+    it("stopped short of publishing, because nobody approved it", () => {
+      // Verified is not the same as agreed to. Publishing is a separate decision, and
+      // the run does not take it on the strength of its own verdict.
+      expect(approved.finalState.draftPullRequestUrl).toBeNull();
+      expect(approved.finalState.routeHistory.map((route) => route.selected)).not.toContain(
+        "publish_draft",
+      );
     });
   });
 });

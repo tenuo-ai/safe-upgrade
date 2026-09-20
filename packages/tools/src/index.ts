@@ -43,8 +43,8 @@ export {
   publishedShape,
 } from "./releases.ts";
 
-export type { BranchArgs, GitStatus, ReadGitDiffArgs } from "./git.ts";
-export { assertBranchName, createGitTools } from "./git.ts";
+export type { BranchArgs, CommitArgs, CommitResult, GitStatus, ReadGitDiffArgs } from "./git.ts";
+export { assertBranchName, assertCommitMessage, createGitTools } from "./git.ts";
 
 export type { CreateDraftPrArgs, DraftPullRequest, GitHubToolOptions } from "./github.ts";
 export { createGitHubTools } from "./github.ts";

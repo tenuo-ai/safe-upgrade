@@ -1,15 +1,18 @@
 import type { WorkerRegistry } from "@safe-upgrade/graph";
 import type { RunContext } from "./context.ts";
+import { createCiAuthor } from "./ci-author.ts";
 import { createImplementer } from "./implementer.ts";
+import { createPublisher } from "./publisher.ts";
 import { createInspector } from "./inspector.ts";
 import { createResearcher } from "./research/researcher.ts";
 import { createTestAuthor } from "./test-author.ts";
 import { createVerifier } from "./verifier.ts";
-import { unimplementedWorker } from "./unimplemented.ts";
 
 export type { RunContext } from "./context.ts";
 export { inWorktree } from "./context.ts";
+export { createCiAuthor, coveredPurposes, minimumMajor, workflowFor } from "./ci-author.ts";
 export { createImplementer } from "./implementer.ts";
+export { createPublisher } from "./publisher.ts";
 export { createInspector } from "./inspector.ts";
 export { convertToEsm } from "./migrate/to-esm.ts";
 export type { Conversion, ConversionResult, Refusal } from "./migrate/to-esm.ts";
@@ -20,7 +23,6 @@ export { deriveFindings, relevantExtract } from "./research/derive.ts";
 export type { Derivation, DerivationInput } from "./research/derive.ts";
 export { findUsages, isSourceFile, isTestFile } from "./research/usages.ts";
 export type { LoadStyle, Usage } from "./research/usages.ts";
-export { unimplementedWorker } from "./unimplemented.ts";
 export { checkOrder, recordCheck } from "./checks.ts";
 
 /**
@@ -35,10 +37,7 @@ export function createWorkerRegistry(context: RunContext): WorkerRegistry {
     verifier: createVerifier(context),
     test_author: createTestAuthor(context),
     implementer: createImplementer(context),
-    ci_author: unimplementedWorker("ci_author", "adding the missing checks to CI"),
-    publisher: unimplementedWorker(
-      "publisher",
-      "pushing the run branch and opening a draft pull request",
-    ),
+    ci_author: createCiAuthor(context),
+    publisher: createPublisher(context),
   };
 }

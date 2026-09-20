@@ -39,10 +39,41 @@ export function assertBranchName(name: string): void {
   }
 }
 
+export type CommitArgs = {
+  readonly message: string;
+}
+
+export interface CommitResult {
+  readonly commit: string;
+  readonly committed: boolean;
+  readonly files: readonly string[];
+}
+
+/**
+ * A commit message is the one free-form string that leaves this system and lands in
+ * permanent history, so it is bounded: no control characters, which keeps terminal
+ * escapes and carriage-return tricks out of `git log`, and a length cap.
+ */
+export function assertCommitMessage(message: string): void {
+  if (message.trim().length === 0) {
+    throw new ToolExecutionError("a commit needs a message");
+  }
+  if (message.length > 4000) {
+    throw new ToolExecutionError("commit message is too long");
+  }
+  // Tab and newline through, everything else out. A carriage return is in the "else":
+  // it lets one line of a message overwrite another when `git log` prints it.
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u0008\u000B-\u001F\u007F]/.test(message)) {
+    throw new ToolExecutionError("commit message contains control characters");
+  }
+}
+
 export function createGitTools(context: ToolContext): {
   readonly readGitStatus: RawTool<EmptyArgs, GitStatus>;
   readonly readGitDiff: RawTool<ReadGitDiffArgs, string>;
   readonly createBranch: RawTool<BranchArgs, { readonly branch: string }>;
+  readonly commitChanges: RawTool<CommitArgs, CommitResult>;
   readonly pushBranch: RawTool<BranchArgs, { readonly branch: string; readonly pushed: boolean }>;
 } {
   const cwd = context.paths.realRoot;
@@ -103,6 +134,49 @@ export function createGitTools(context: ToolContext): {
         }
         await git(["checkout", "-b", args.name]);
         return { branch: args.name };
+      },
+    ),
+
+    commitChanges: defineTool<CommitArgs, CommitResult>(
+      context,
+      "commit_changes",
+      "Commit everything changed in this run's worktree. One message argument.",
+      async (args) => {
+        assertCommitMessage(args.message);
+        const branch = (await git(["rev-parse", "--abbrev-ref", "HEAD"])).trim();
+        if (branch !== context.runBranch) {
+          // Committing onto whatever happens to be checked out would put this run's
+          // changes on the user's branch. The run branch or nothing.
+          throw new ToolExecutionError(`refusing to commit on ${branch}; this run commits only on ${context.runBranch}`);
+        }
+
+        // `git add` is scoped to the worktree by cwd, and `--` stops any pathspec
+        // from being read as an option.
+        await git(["add", "--all", "--", "."]);
+        const staged = (await git(["diff", "--cached", "--name-only"]))
+          .split("\n")
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0);
+        if (staged.length === 0) {
+          return { commit: (await git(["rev-parse", "HEAD"])).trim(), committed: false, files: [] };
+        }
+
+        await git([
+          // An identity, because the run's git environment is isolated from the user's
+          // config and a commit with no `user.email` fails outright.
+          "-c",
+          "user.name=safe-upgrade",
+          "-c",
+          "user.email=safe-upgrade@invalid",
+          "commit",
+          // Hooks are code the repository supplies, and this system does not run
+          // repository code as a side effect of an unrelated action.
+          "--no-verify",
+          // No --amend and no --allow-empty anywhere: this only ever adds history.
+          "--message",
+          args.message,
+        ]);
+        return { commit: (await git(["rev-parse", "HEAD"])).trim(), committed: true, files: staged };
       },
     ),
 

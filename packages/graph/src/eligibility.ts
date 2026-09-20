@@ -91,7 +91,11 @@ const RULES: readonly Rule[] = [
     action: "configure_ci",
     evaluate: (state) => {
       if (state.ciAssessment === null) {
-        return null; // Nothing has established what CI is missing.
+        // Deliberately eligible. Only the CI author can establish what CI is missing,
+        // so requiring an assessment first means no action ever sets one and `ciSufficient`
+        // is permanently false — a run could never reach `verified` however good the
+        // change was. It assesses as part of configuring, like the test author.
+        return "whether CI re-runs these checks has not been established";
       }
       if (state.ciAssessment.sufficient) {
         return null;

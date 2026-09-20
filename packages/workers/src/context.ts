@@ -28,6 +28,8 @@ export interface RunContext {
   readonly absentChecks: readonly CheckPurpose[];
   /** Commit the worktree was created from. */
   readonly startCommit: string;
+  /** The one branch this run may create and push. */
+  readonly runBranch: string;
   /** Whether the user's checkout was clean when the run started. */
   readonly sourceClean: boolean;
   readonly detectionWarnings: readonly string[];

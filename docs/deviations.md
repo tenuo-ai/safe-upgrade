@@ -185,9 +185,11 @@ addresses a raised Node floor; it is a fact to confirm against the versions CI r
 Without the flag the implementer stays eligible forever over something it cannot act
 on, and the run burns its attempt budget instead of verifying.
 
-It still costs the run its `verified` status, and the report says why: the claim has
-no corresponding change. Confirming it belongs to the CI author, which is not written
-yet.
+It is discharged by the CI author instead, and only in one specific way: the workflow
+it writes pins a Node version, and the finding is claimed as addressed when that
+version satisfies the floor the researcher read. A floor that cannot be parsed leaves
+the finding unaddressed and the run short of `verified`, which is the honest outcome —
+nobody has established that CI runs a version the package accepts.
 
 ## Only the verifier marks a finding verified
 
@@ -199,3 +201,58 @@ those.
 
 "A test was written for it" is a claim about a test. This is a claim about a test that
 executed.
+
+## The CI author adds a workflow and never edits one
+
+Editing `ci.yml` is text surgery on the file that decides what gates a merge, and the
+failure mode is quiet: a step dropped from an existing workflow removes a gate and
+leaves the green tick that says it is still there. Adding a file cannot do that. The
+new checks arrive where a reviewer sees them next to the old ones, and folding them
+together is a decision this system does not make.
+
+It also means a repository accumulates a second workflow rather than a tidier first
+one. That is the trade, taken deliberately.
+
+## CI coverage is read from `run:` lines, and errs towards missing
+
+There is no YAML parser here, and a real one would not settle the question anyway: a
+`run: npm run ci` whose script invokes the build is covered, and nothing short of
+executing it can tell. The reading looks at `run:` lines for the check's own command,
+which means an indirectly reached check is reported as missing.
+
+The bias is the point. Reporting a gap that is not there costs a duplicated step in
+CI. Reporting coverage that is not there costs a gate nobody knows is gone. The unit
+tests pin which way it errs, including the `npm run ci` case it gets wrong.
+
+## Nothing can commit except the publisher, and only on the run branch
+
+`commit_changes` exists because a pushed branch with no commits is worse than no
+branch: it looks, from the outside, like an upgrade that worked. Only the publisher
+holds it, it refuses to run unless HEAD is the run branch, and it passes `--no-verify`
+— repository hooks are code the repository supplies, and this system does not run
+repository code as a side effect of an unrelated action.
+
+The commit identity is the run's own rather than the user's git config, so a commit is
+never misattributed to whoever's machine it happened on.
+
+## An approval takes effect in the pass that asked for it
+
+A worker's request for elevation only reaches graph state as a result of the pass that
+made it, so an approval supplied up front cannot be matched during that pass. Left
+alone, approving something would cost a whole routing round that did nothing, and a
+run that had been given the answer would look as though it had ignored it.
+
+The graph retries the worker once when a request it just made has a grant. This is
+sound only because a worker that asks for elevation returns without writing anything:
+the retry replaces a pass that did nothing rather than repeating a pass that did
+something. It happens at most once, because the second attempt is handed the approval
+and has no reason to ask again.
+
+## Publishing is a separate approval from wanting a draft
+
+`createDraftPullRequest` says a draft is wanted. `publishApproved` says someone agreed
+to push. The second is never inferred from the first, and neither is inferred from the
+run's own verdict: `verified` is this system's opinion of its own work, and treating it
+as permission to push would let the thing being checked decide it had passed.
+
+A verified run that nobody approved for publishing says where the branch is and stops.

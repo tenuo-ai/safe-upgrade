@@ -149,6 +149,7 @@ export function workerProfiles(context: CeilingContext): Readonly<Record<WorkerI
         "read_git_status",
         "read_git_diff",
         "create_branch",
+        "commit_changes",
         "push_branch",
         "create_draft_pr",
       ]),

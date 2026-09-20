@@ -29,6 +29,7 @@ import {
 import { AuditLog, type AuditEvent } from "@safe-upgrade/evidence";
 import { detectRepositoryFacts, isolateRepository } from "@safe-upgrade/bootstrap";
 import { createDevAuthorizationRuntime } from "@safe-upgrade/authorization";
+import type { GitHubToolOptions } from "@safe-upgrade/tools";
 import { buildGraph, type RouterConfig, type UpgradeState } from "@safe-upgrade/graph";
 import { DeterministicEngine, type DecisionEngine } from "@safe-upgrade/jev";
 import { createWorkerRegistry } from "@safe-upgrade/workers";
@@ -60,6 +61,17 @@ export interface RunOptions {
    * run is told the answer.
    */
   readonly approvals?: readonly ElevationGrant[];
+  /**
+   * Whether a person has approved publishing this run's branch.
+   *
+   * Separate from `createDraftPullRequest`, which only says a draft is wanted. Wanting
+   * one and agreeing to push are different decisions, and the second is never inferred
+   * from the first: without this, a verified run reports that publishing is the only
+   * thing left and stops.
+   */
+  readonly publishApproved?: boolean;
+  /** Repository and token for the draft pull request. Absent means no publishing. */
+  readonly github?: GitHubToolOptions;
   readonly clock?: () => Date;
 }
 
@@ -69,6 +81,8 @@ export interface RunReport {
   readonly result: FinalResult;
   readonly facts: RepositoryFacts;
   readonly startCommit: string;
+  /** The one branch this run could have created and pushed. */
+  readonly runBranch: string;
   readonly sourceClean: boolean;
   readonly detectionWarnings: readonly string[];
   readonly absentChecks: readonly CheckPurpose[];
@@ -131,6 +145,7 @@ export async function runUpgrade(options: RunOptions): Promise<RunReport> {
       runBranch: isolation.runBranch,
       requestedPackage: options.packageName,
       manifestPaths: detection.facts.manifests.map((manifest) => join(isolation.worktreePath, manifest)),
+      ...(options.github === undefined ? {} : { github: options.github }),
       targetVersion: options.targetVersion,
       audit,
     });
@@ -143,6 +158,7 @@ export async function runUpgrade(options: RunOptions): Promise<RunReport> {
       checkScripts: detection.checkScripts,
       absentChecks: detection.absentChecks,
       startCommit: isolation.startCommit,
+      runBranch: isolation.runBranch,
       sourceClean: isolation.sourceClean,
       detectionWarnings: detection.warnings,
     });
@@ -162,7 +178,10 @@ export async function runUpgrade(options: RunOptions): Promise<RunReport> {
       ...(options.clock === undefined ? {} : { clock: options.clock }),
     }).compile();
 
-    const finalState = (await graph.invoke({ request })) as UpgradeState;
+    const finalState = (await graph.invoke({
+      request,
+      ...(options.publishApproved === true ? { approvalGranted: true } : {}),
+    })) as UpgradeState;
 
     const result = finalState.result;
     if (result === null) {
@@ -175,6 +194,7 @@ export async function runUpgrade(options: RunOptions): Promise<RunReport> {
       result,
       facts: detection.facts,
       startCommit: isolation.startCommit,
+      runBranch: isolation.runBranch,
       sourceClean: isolation.sourceClean,
       detectionWarnings: detection.warnings,
       absentChecks: detection.absentChecks,
@@ -249,6 +269,13 @@ export function renderReport(report: RunReport): string {
   );
   section("Detection warnings", report.detectionWarnings);
   section("Findings", finalState.findings.map((finding) => `${finding.id}: ${finding.releaseClaim}`));
+  // Attributed, because "the run changed these files" and "this worker, holding this
+  // capability, changed this file for this reason" are different claims, and only the
+  // second one can be checked against the audit log.
+  section(
+    "Changes, and the worker that made each",
+    finalState.fileChanges.map((change) => `\`${change.path}\` — ${change.owner}: ${change.reason}`),
+  );
   section("Residual uncertainty", finalState.highSeverityUncertainty);
   section("Prohibited actions", finalState.prohibitedActions);
 
@@ -276,6 +303,23 @@ export function renderReport(report: RunReport): string {
         "",
       );
     }
+  }
+
+  if (finalState.draftPullRequestUrl !== null) {
+    lines.push("## Published", "", `- Draft pull request: ${finalState.draftPullRequestUrl}`, "");
+  } else if (finalState.fileChanges.length > 0) {
+    // A run that produced a change and did not publish it has left that change in a
+    // worktree that will be removed. Saying where it went matters more than it sounds:
+    // the alternative is a verified result whose work quietly disappears.
+    lines.push(
+      "## Not published",
+      "",
+      `- The change is on \`${report.runBranch}\` in ${facts.worktreePath}, uncommitted.`,
+      report.request.createDraftPullRequest
+        ? "- Publishing was requested. Re-run with `publishApproved` to commit, push, and open a draft."
+        : "- Publishing was not requested, so nothing was pushed and no pull request exists.",
+      "",
+    );
   }
 
   if (report.artifactsDirectory !== undefined) {

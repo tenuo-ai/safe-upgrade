@@ -60,6 +60,23 @@ describe("classifyRun", () => {
     expect(result.status).toBe("human_required");
   });
 
+  it("says whether the approval is the only thing left", () => {
+    // The two cases below are the same status and want opposite decisions from whoever
+    // reads them, so the difference has to be in the reasons.
+    const settled = classifyRun({ ...verifiable, pendingApprovals: ["draft pull request"] });
+    expect(settled.reasons).toContain("nothing else is outstanding: every other condition this run checks is met");
+
+    const unsettled = classifyRun({
+      ...verifiable,
+      pendingApprovals: ["draft pull request"],
+      ciSufficient: false,
+      requiredChecks: [check("install", "passed"), check("test", "failed")],
+    });
+    expect(unsettled.reasons.join(" ")).toContain("also outstanding");
+    expect(unsettled.reasons.join(" ")).toContain("required test check failed");
+    expect(unsettled.reasons.join(" ")).toContain("CI does not cover");
+  });
+
   it("returns indeterminate rather than verified when evidence is missing", () => {
     const result = classifyRun({
       ...verifiable,

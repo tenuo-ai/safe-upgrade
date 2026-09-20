@@ -78,29 +78,74 @@ async function runWorker(
   state: UpgradeState,
 ): Promise<UpgradeStateUpdate> {
   const workerFn = dependencies.workers[worker];
+  const grants = dependencies.elevationGrants ?? [];
   // Approvals are matched here, in the graph, from recorded requests and grants
   // that came from outside the run. The worker is handed the resulting session; it
   // has no say in what went into it.
-  const elevations = approvedElevations(state, worker, dependencies.elevationGrants ?? []);
-  const update = await dependencies.runtime.broker.withWorker(
-    worker,
-    phase,
-    (handle) =>
-      workerFn({
-        state,
-        handle,
-        runtime: dependencies.runtime,
-        engine: dependencies.engine,
-        audit: dependencies.audit,
-      }),
-    { elevations },
-  );
+  const elevations = approvedElevations(state, worker, grants);
+  const run = (applied: readonly ApprovedElevation[]): Promise<UpgradeStateUpdate> =>
+    dependencies.runtime.broker.withWorker(
+      worker,
+      phase,
+      (handle) =>
+        workerFn({
+          state,
+          handle,
+          runtime: dependencies.runtime,
+          engine: dependencies.engine,
+          audit: dependencies.audit,
+        }),
+      { elevations: applied },
+    );
+
+  const update = await run(elevations);
+
+  // A request a worker makes for the first time cannot have been matched above,
+  // because it was not in state when this node started. Without a retry, supplying an
+  // approval would still cost a routing round doing nothing, and the run would look
+  // as though the approval had been ignored.
+  //
+  // This is only sound because a worker that asks for elevation returns without
+  // writing anything, which is the contract those workers document. The retry
+  // therefore replaces a pass that did nothing rather than repeating a pass that did
+  // something. It happens at most once: the second attempt is given the approvals, so
+  // it has no reason to ask again.
+  const newlyApproved = newlyApprovedRequests(update, worker, grants, elevations);
+  const settled = newlyApproved.length === 0 ? update : await run([...elevations, ...newlyApproved]);
+
   return {
-    ...update,
+    ...settled,
+    // Kept from the first attempt even when the retry succeeded, so the audit and the
+    // report still show what was asked for and approved.
+    ...(update.elevationRequests === undefined ? {} : { elevationRequests: update.elevationRequests }),
     step: 1,
     workerAttempts: { [worker]: 1 },
     activeSessionRef: null,
   };
+}
+
+function newlyApprovedRequests(
+  update: UpgradeStateUpdate,
+  worker: WorkerId,
+  grants: readonly ElevationGrant[],
+  already: readonly ApprovedElevation[],
+): readonly ApprovedElevation[] {
+  const requests = update.elevationRequests;
+  if (requests === undefined || !Array.isArray(requests)) {
+    return [];
+  }
+  const seen = new Set(already.map(({ request }) => request.id));
+  const approved: ApprovedElevation[] = [];
+  for (const request of requests) {
+    if (request.worker !== worker || seen.has(request.id)) {
+      continue;
+    }
+    const grant = grantFor(request, grants);
+    if (grant !== null) {
+      approved.push({ request, grant });
+    }
+  }
+  return approved;
 }
 
 /**

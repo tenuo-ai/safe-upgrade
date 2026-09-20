@@ -19,6 +19,7 @@ import { exact, max, oneOf, regex, under, urlSafe, wildcard, type ConstraintExpr
 import { EDITABLE_MANIFEST_FIELDS, allowedManifestValues } from "@safe-upgrade/tools";
 import type {
   BranchArgs,
+  CommitArgs,
   CreateDraftPrArgs,
   EmptyArgs,
   FetchReleaseDocumentArgs,
@@ -48,6 +49,7 @@ export const CAPABILITIES = [
   "read_git_status",
   "read_git_diff",
   "create_branch",
+  "commit_changes",
   "push_branch",
   "create_draft_pr",
 ] as const;
@@ -76,6 +78,7 @@ export interface CapabilityArgs {
   read_git_status: EmptyArgs;
   read_git_diff: ReadGitDiffArgs;
   create_branch: BranchArgs;
+  commit_changes: CommitArgs;
   push_branch: BranchArgs;
   create_draft_pr: CreateDraftPrArgs;
 }
@@ -201,6 +204,9 @@ export function capabilityCeilings(context: CeilingContext): Ceilings {
     read_git_status: {},
     read_git_diff: { pathspec: anyText() },
     create_branch: { name: exact(context.runBranch) },
+    // Any message, because a message cannot do damage; the tool bounds its shape
+    // and the branch it may land on.
+    commit_changes: { message: anyText() },
     push_branch: { name: exact(context.runBranch) },
     create_draft_pr: {
       base: anyText(),

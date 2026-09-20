@@ -24,7 +24,7 @@ Implemented so far:
 | `@safe-upgrade/jev` | Decision engine contract, response validation, deterministic fallback, offline engine |
 | `@safe-upgrade/graph` | LangGraph state machine, transition allowlist, eligibility predicates, router |
 | `@safe-upgrade/bootstrap` | Worktree isolation and repository detection, both trusted code |
-| `@safe-upgrade/workers` | Inspector, researcher, test author, implementer, independent verifier |
+| `@safe-upgrade/workers` | All seven: inspector, researcher, test author, implementer, CI author, verifier, publisher |
 | `@safe-upgrade/runner` | Assembles a run and writes the evidence |
 
 A run works end to end today against `fixtures/legacy-app`, which is pinned to
@@ -46,15 +46,22 @@ reports what it wants approved, by id, and changes nothing while it waits. Appro
 that id and re-running completes the migration and verifies it. See
 [capability elevation](#capabilities-a-human-has-to-approve).
 
-The result is `partial` rather than `verified`, for two reasons the run states
-plainly: the raised Node floor is a claim that needs confirming against what CI
-runs, and CI does not re-run the checks that passed locally. Both belong to the CI
-author, which is not written yet.
+The fixture's own workflow runs the tests and never the build, on purpose: a
+dependency that breaks at build time would reach main behind a green tick. The run
+notices, and adds a workflow that runs the checks it was verified against, on a Node
+version that satisfies the floor the upgraded package states. It adds a file rather
+than editing `ci.yml`, because a step accidentally dropped from an existing workflow
+removes a gate while leaving the tick.
 
-Not built yet: the CI author and publisher workers, and the Jev SDK adapter. With no
-engine configured the router uses the deterministic priority order, which is a
-supported configuration rather than a placeholder — the route is then a pure
-function of graph state.
+With that, the approved run reaches `verified` and states the five conditions that
+earned it. Publishing is a further decision: the run commits to its own branch,
+pushes it, and opens a draft pull request only when a person has approved that
+separately. It cannot merge, cannot mark a draft ready, and cannot push any branch
+but its own.
+
+Not built yet: the Jev SDK adapter. With no engine configured the router uses the
+deterministic priority order, which is a supported configuration rather than a
+placeholder — the route is then a pure function of graph state.
 
 ## The shape of the security argument
 

@@ -42,6 +42,7 @@ export interface ProtectedToolset {
   readonly read_git_status: Wrapped<ReturnType<typeof createGitTools>["readGitStatus"]>;
   readonly read_git_diff: Wrapped<ReturnType<typeof createGitTools>["readGitDiff"]>;
   readonly create_branch: Wrapped<ReturnType<typeof createGitTools>["createBranch"]>;
+  readonly commit_changes: Wrapped<ReturnType<typeof createGitTools>["commitChanges"]>;
   readonly push_branch: Wrapped<ReturnType<typeof createGitTools>["pushBranch"]>;
   /** Present only when the run is configured with a GitHub repository and token. */
   readonly create_draft_pr?: Wrapped<ReturnType<typeof createGitHubTools>["createDraftPr"]>;
@@ -89,6 +90,7 @@ export function createProtectedToolset(options: ProtectedToolsetOptions): Protec
     read_git_status: wrap("read_git_status", git.readGitStatus),
     read_git_diff: wrap("read_git_diff", git.readGitDiff),
     create_branch: wrap("create_branch", git.createBranch),
+    commit_changes: wrap("commit_changes", git.commitChanges),
     push_branch: wrap("push_branch", git.pushBranch),
   };
 

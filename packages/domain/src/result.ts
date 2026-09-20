@@ -47,6 +47,47 @@ function failedChecks(checks: readonly CheckResult[]): CheckResult[] {
   return checks.filter((check) => check.outcome !== "passed");
 }
 
+interface Derived {
+  readonly unaddressed: readonly string[];
+  readonly unverifiedFindings: readonly string[];
+  readonly failed: readonly CheckResult[];
+  readonly capAtPartial: boolean;
+}
+
+/**
+ * Every condition `verified` requires and this run does not meet, in words.
+ *
+ * One function rather than a boolean predicate beside a list of reasons. Those were two
+ * spellings of the same rule, and a condition added to one but not the other gives a
+ * run that either claims `verified` without saying why or withholds it without saying
+ * why. An empty result here is what `verified` means.
+ */
+function shortfalls(input: ClassificationInput, derived: Derived): string[] {
+  const out: string[] = [];
+  if (derived.capAtPartial) {
+    out.push("the baseline was not clean, so post-change results cannot be compared against it");
+  }
+  if (!input.targetVersionResolved) {
+    out.push("installed version does not resolve exactly to the requested target");
+  }
+  for (const id of derived.unaddressed) {
+    out.push(`finding ${id} is not addressed`);
+  }
+  for (const id of derived.unverifiedFindings) {
+    out.push(`finding ${id} has no meaningful verification path`);
+  }
+  for (const check of derived.failed) {
+    out.push(`required ${check.command.purpose} check ${check.outcome}`);
+  }
+  if (!input.diffPolicyPassed) {
+    out.push("diff policy failed");
+  }
+  if (!input.ciSufficient) {
+    out.push("CI does not cover the verified command set");
+  }
+  return out;
+}
+
 /**
  * Precedence is fixed: prohibited actions and blocking conditions outrank
  * everything, then pending approvals, then the positive `verified` predicate,
@@ -101,6 +142,16 @@ export function classifyRun(input: ClassificationInput): FinalResult {
 
   if (input.pendingApprovals.length > 0) {
     reasons.push(...input.pendingApprovals.map((item) => `awaiting approval: ${item}`));
+    // Whether the wait is the only thing left is the first thing the person deciding
+    // needs to know, and it is not implied by anything above. Without this, a run that
+    // established everything and needs a yes reads exactly like one that is stuck on a
+    // failing check and happens to also need a yes.
+    const outstanding = shortfalls(input, { unaddressed, unverifiedFindings, failed, capAtPartial });
+    reasons.push(
+      outstanding.length === 0
+        ? "nothing else is outstanding: every other condition this run checks is met"
+        : `also outstanding, independently of the approval: ${outstanding.join("; ")}`,
+    );
     return decide("human_required");
   }
 
@@ -118,16 +169,9 @@ export function classifyRun(input: ClassificationInput): FinalResult {
     return decide("indeterminate");
   }
 
-  const verifiedConditions =
-    !capAtPartial &&
-    input.targetVersionResolved &&
-    unaddressed.length === 0 &&
-    unverifiedFindings.length === 0 &&
-    failed.length === 0 &&
-    input.diffPolicyPassed &&
-    input.ciSufficient;
+  const outstanding = shortfalls(input, { unaddressed, unverifiedFindings, failed, capAtPartial });
 
-  if (verifiedConditions) {
+  if (outstanding.length === 0) {
     reasons.push(
       "target version resolved exactly",
       "every finding addressed and covered by a verification path",
@@ -138,31 +182,27 @@ export function classifyRun(input: ClassificationInput): FinalResult {
     return decide("verified");
   }
 
+  reasons.push(...outstanding);
+
   if (!input.targetVersionResolved) {
-    reasons.push("installed version does not resolve exactly to the requested target");
     unverifiedClaims.push("the dependency upgrade itself is unconfirmed");
   }
   for (const id of unaddressed) {
-    reasons.push(`finding ${id} is not addressed`);
     unverifiedClaims.push(`finding ${id} has no corresponding change`);
   }
   for (const id of unverifiedFindings) {
-    reasons.push(`finding ${id} has no meaningful verification path`);
     unverifiedClaims.push(`finding ${id} is unverified`);
   }
   for (const check of failed) {
-    reasons.push(`required ${check.command.purpose} check ${check.outcome}`);
     unverifiedClaims.push(`${check.command.purpose} is unverified`);
   }
   for (const check of notRun) {
     unverifiedClaims.push(`${check.command.purpose} never ran`);
   }
   if (!input.diffPolicyPassed) {
-    reasons.push("diff policy failed");
     unverifiedClaims.push("the change set contains edits the policy forbids");
   }
   if (!input.ciSufficient) {
-    reasons.push("CI does not cover the verified command set");
     unverifiedClaims.push("CI will not re-run the checks proven locally");
   }
   for (const purpose of input.optionalCheckPurposes) {
