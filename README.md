@@ -23,11 +23,20 @@ Implemented so far:
 | `@safe-upgrade/authorization` | Capability ceilings, worker profiles, session registry, delegation broker |
 | `@safe-upgrade/jev` | Decision engine contract, response validation, deterministic fallback, offline engine |
 | `@safe-upgrade/graph` | LangGraph state machine, transition allowlist, eligibility predicates, router |
+| `@safe-upgrade/bootstrap` | Worktree isolation and repository detection, both trusted code |
+| `@safe-upgrade/workers` | Inspector, baseline, independent verifier |
+| `@safe-upgrade/runner` | Assembles a run and writes the evidence |
 
-Not built yet: the Jev SDK adapter, the specialist worker implementations, the
-report generator, and the end-to-end fixture. The graph runs today against
-scripted workers and the deterministic decision engine, which is how the routing
-tests exercise it without network access.
+A run works end to end today against `fixtures/legacy-app`: a real worktree, a
+real `npm ci`, the repository's own scripts as child processes, every tool call
+authorized, and a classified result with its evidence on disk. It finishes as
+`blocked`, because five of the seven workers report that they are not written
+rather than returning an empty update and letting the graph declare success.
+
+Not built yet: the researcher, test author, implementer, CI author, and publisher
+workers, and the Jev SDK adapter. With no engine configured the router uses the
+deterministic priority order, which is a supported configuration rather than a
+placeholder — the route is then a pure function of graph state.
 
 ## The shape of the security argument
 

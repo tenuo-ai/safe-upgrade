@@ -100,3 +100,23 @@ unnamed is denied. An empty ceiling is not closed-world, because there is no
 named argument to compare against, so an unexpected key reaches the tool body.
 `read_git_status` is the only such tool, and it rejects unexpected arguments
 itself via `defineTool`'s `expectedArguments`.
+
+## The verifier does not provision its own worktree
+
+Spec 13.6 opens with "start from a new worktree or clean copy". The verifier does
+not do this, and should not: creating a worktree is not among its capabilities,
+and a verifier able to provision its own environment could provision a
+favourable one. Isolation belongs to trusted code, so a second worktree for
+verification is the runner's job to supply. Today the verifier verifies in the
+run's worktree, after a frozen clean install, and this is the gap to close when
+the implementer lands.
+
+## Detection runs before the inspector, not inside it
+
+Spec 13.1 lists `RepositoryFacts` as an inspector output. They are produced by
+`@safe-upgrade/bootstrap` before the graph starts, because the capability
+ceilings are derived from them: the worktree root that `under()` contains, the
+branch that `exact()` pins, the package manager whose executable gets spawned. A
+worker whose output determined its own authority could widen it. The inspector
+confirms the facts through its capabilities — it reads git status and checks the
+worktree is clean and at the expected commit — and records them into state.

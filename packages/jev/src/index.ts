@@ -17,3 +17,5 @@ export { deterministicFallback } from "./fallback.ts";
 
 export type { FakeDecisionEngineOptions, ScriptedResponse } from "./fake.ts";
 export { FakeDecisionEngine } from "./fake.ts";
+
+export { DeterministicEngine } from "./deterministic.ts";

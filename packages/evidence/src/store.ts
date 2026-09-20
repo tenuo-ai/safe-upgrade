@@ -14,6 +14,9 @@ import { redact, sha256Hex } from "./hash.ts";
 
 export type AuditEventType =
   | "route_decision"
+  | "repository_inspected"
+  | "baseline_recorded"
+  | "worker_unimplemented"
   | "session_delegated"
   | "session_destroyed"
   | "tool_allowed"

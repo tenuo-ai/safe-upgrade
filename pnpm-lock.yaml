@@ -29,9 +29,15 @@ importers:
       '@safe-upgrade/jev':
         specifier: workspace:*
         version: link:packages/jev
+      '@safe-upgrade/runner':
+        specifier: workspace:*
+        version: link:packages/runner
       '@safe-upgrade/tools':
         specifier: workspace:*
         version: link:packages/tools
+      '@safe-upgrade/workers':
+        specifier: workspace:*
+        version: link:packages/workers
       '@tenuo/core':
         specifier: 0.3.0-beta.0
         version: 0.3.0-beta.0
@@ -114,6 +120,30 @@ importers:
         specifier: 3.25.76
         version: 3.25.76
 
+  packages/runner:
+    dependencies:
+      '@safe-upgrade/authorization':
+        specifier: workspace:*
+        version: link:../authorization
+      '@safe-upgrade/bootstrap':
+        specifier: workspace:*
+        version: link:../bootstrap
+      '@safe-upgrade/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@safe-upgrade/evidence':
+        specifier: workspace:*
+        version: link:../evidence
+      '@safe-upgrade/graph':
+        specifier: workspace:*
+        version: link:../graph
+      '@safe-upgrade/jev':
+        specifier: workspace:*
+        version: link:../jev
+      '@safe-upgrade/workers':
+        specifier: workspace:*
+        version: link:../workers
+
   packages/tools:
     dependencies:
       '@safe-upgrade/domain':
@@ -125,6 +155,21 @@ importers:
       zod:
         specifier: 3.25.76
         version: 3.25.76
+
+  packages/workers:
+    dependencies:
+      '@safe-upgrade/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@safe-upgrade/evidence':
+        specifier: workspace:*
+        version: link:../evidence
+      '@safe-upgrade/graph':
+        specifier: workspace:*
+        version: link:../graph
+      '@safe-upgrade/tools':
+        specifier: workspace:*
+        version: link:../tools
 
 packages:
 
