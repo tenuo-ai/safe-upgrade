@@ -56,8 +56,19 @@ const union = () =>
 const appendDistinct = <T extends { readonly id: string }>() =>
   Annotation<readonly T[], readonly T[]>({
     reducer: (current, update) => {
+      // The seen set grows as the update is walked, so duplicates arriving together in
+      // one update are dropped too. Filtering only against `current` made this true of
+      // repeated appends but not of a single one, which is a distinction no caller
+      // should have to know about.
       const seen = new Set(current.map((value) => value.id));
-      return [...current, ...update.filter((value) => !seen.has(value.id))];
+      const added: T[] = [];
+      for (const value of update) {
+        if (!seen.has(value.id)) {
+          seen.add(value.id);
+          added.push(value);
+        }
+      }
+      return [...current, ...added];
     },
     default: () => [],
   });

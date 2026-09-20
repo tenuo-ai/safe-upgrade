@@ -8,7 +8,13 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { coveredPurposes, minimumMajor, workflowFor } from "@safe-upgrade/workers";
+import {
+  coveredPurposes,
+  dischargedByWorkflow,
+  lowestAdmitted,
+  satisfies,
+  workflowFor,
+} from "@safe-upgrade/workers";
 import type { RunContext } from "@safe-upgrade/workers";
 import type { PackageManager } from "@safe-upgrade/domain";
 
@@ -27,6 +33,19 @@ describe("reading what a workflow already runs", () => {
 
   it("treats `npm test` and `npm run test` as the same thing", () => {
     expect(covered("  - run: npm run test\n")).toEqual(["test"]);
+  });
+
+  it("stops a run block at a sibling key of the same step", () => {
+    // An `env:` mapping is not part of the block, and a value in it mentioning a
+    // command would otherwise read as though the step ran that command.
+    const content = [
+      "      - run: |",
+      "          npm ci",
+      "        env:",
+      "          NOTE: npm run build",
+      "      - uses: x",
+    ].join("\n");
+    expect(covered(content)).toEqual(["install"]);
   });
 
   it("reads every line of a multi-line run block", () => {
@@ -60,21 +79,90 @@ describe("reading what a workflow already runs", () => {
   });
 });
 
-describe("the Node floor a workflow has to satisfy", () => {
-  it("reads the lower bound out of a range", () => {
-    expect(minimumMajor(">=12")).toBe(12);
-    expect(minimumMajor(">= 18.0.0")).toBe(18);
-    expect(minimumMajor("^20.1.0")).toBe(20);
+describe("whether a pinned Node version satisfies a range", () => {
+  it("accepts a version at or above a lower bound", () => {
+    expect(satisfies(">=12", 22)).toBe(true);
+    expect(satisfies(">= 18.0.0", 22)).toBe(true);
+    expect(satisfies(">=22", 22)).toBe(true);
   });
 
-  it("takes the highest bound when a range states several", () => {
-    expect(minimumMajor(">=14 <19 || >=20")).toBe(20);
+  it("rejects a version below a lower bound", () => {
+    expect(satisfies(">=24", 22)).toBe(false);
   });
 
-  it("returns nothing when there is no bound to read", () => {
-    // Which leaves the finding unaddressed rather than claimed on a guess.
-    expect(minimumMajor("latest")).toBeNull();
-    expect(minimumMajor("*")).toBeNull();
+  it("honours an upper bound", () => {
+    // The bug this replaces took the largest number it could find and ignored `<`
+    // entirely, so `>=12 <20` read as "12 or above" and Node 22 looked fine.
+    expect(satisfies(">=12 <20", 22)).toBe(false);
+    expect(satisfies(">=12 <23", 22)).toBe(true);
+    expect(satisfies("^20.1.0", 22)).toBe(false);
+    expect(satisfies("^22.0.0", 22)).toBe(true);
+  });
+
+  it("refuses an upper bound inside the pinned major", () => {
+    // `node-version: "22"` is whatever 22.x is newest, which may well exceed 22.5.
+    expect(satisfies(">=22.1 <22.5", 22)).toBe(false);
+    expect(satisfies("<=22", 22)).toBe(false);
+  });
+
+  it("is satisfied when any alternative of a union is", () => {
+    expect(satisfies("^14.13.1 || >=16.0.0", 22)).toBe(true);
+    expect(satisfies("^14.13.1 || ^16.0.0", 22)).toBe(false);
+  });
+
+  it("says it does not know rather than guessing", () => {
+    // Every one of these leaves the finding unaddressed and the run short of
+    // `verified`, which is the honest outcome: nobody established that CI runs a
+    // version the package accepts.
+    expect(satisfies("latest", 22)).toBeNull();
+    expect(satisfies("*", 22)).toBeNull();
+    expect(satisfies("20.x", 22)).toBeNull();
+    expect(satisfies("~22.1", 22)).toBeNull();
+    expect(satisfies("14 - 22", 22)).toBeNull();
+    expect(satisfies("", 22)).toBeNull();
+  });
+});
+
+describe("the lowest version a range admits", () => {
+  it("reads the floor of a simple range", () => {
+    expect(lowestAdmitted(">=12")).toBe(12);
+    expect(lowestAdmitted(">=12 <20")).toBe(12);
+  });
+
+  it("takes the lowest across a union, not the highest", () => {
+    // This decides whether a repository's own `engines` still admits a version its
+    // dependency rejects, so the lowest thing it would install on is the question.
+    expect(lowestAdmitted("^14.13.1 || >=16.0.0")).toBe(14);
+  });
+
+  it("returns nothing for a range it cannot read", () => {
+    expect(lowestAdmitted("20.x")).toBeNull();
+  });
+});
+
+describe("whether a workflow settles a raised runtime requirement", () => {
+  it("settles it when the pinned version satisfies the range and nothing contradicts", () => {
+    expect(dischargedByWorkflow(">=12", null, 22)).toBe(true);
+  });
+
+  it("does not settle it when the pinned version is outside the range", () => {
+    expect(dischargedByWorkflow(">=24", null, 22)).toBe(false);
+    expect(dischargedByWorkflow(">=12 <20", null, 22)).toBe(false);
+  });
+
+  it("does not settle it while the repository still advertises a version the range rejects", () => {
+    // What CI runs is not the whole question. A package saying `engines.node >=10` while
+    // its dependency needs 12 is broken for whoever installs it on Node 10.
+    expect(dischargedByWorkflow(">=12", ">=10", 22)).toBe(false);
+    expect(dischargedByWorkflow(">=12", ">=12", 22)).toBe(true);
+    expect(dischargedByWorkflow(">=12", ">=18", 22)).toBe(true);
+    // A union is judged by the lowest thing it would install on, not the highest.
+    expect(dischargedByWorkflow(">=16", "^14.13.1 || >=16.0.0", 22)).toBe(false);
+  });
+
+  it("does not settle it on a range it cannot read", () => {
+    expect(dischargedByWorkflow("20.x", null, 22)).toBe(false);
+    expect(dischargedByWorkflow(">=12", "20.x", 22)).toBe(false);
   });
 });
 

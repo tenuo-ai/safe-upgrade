@@ -85,6 +85,14 @@ export interface MigrationFinding {
   readonly confidence: number;
   /** Set when research concludes only a manifest and lockfile change is needed. */
   readonly noSourceChangeRequired?: boolean;
+  /**
+   * A runtime version range something outside the source has to satisfy.
+   *
+   * Carried structurally rather than left for a later worker to read back out of
+   * `releaseClaim`. That claim is a sentence, and it mentions two ranges — the new
+   * requirement and the old one — so anything parsing it is guessing which is which.
+   */
+  readonly requiredNodeRange?: string;
 }
 
 export type CheckOutcome = "passed" | "failed" | "timed_out" | "not_run";

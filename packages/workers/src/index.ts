@@ -10,7 +10,14 @@ import { createVerifier } from "./verifier.ts";
 
 export type { RunContext } from "./context.ts";
 export { inWorktree } from "./context.ts";
-export { createCiAuthor, coveredPurposes, minimumMajor, workflowFor } from "./ci-author.ts";
+export {
+  createCiAuthor,
+  coveredPurposes,
+  dischargedByWorkflow,
+  lowestAdmitted,
+  satisfies,
+  workflowFor,
+} from "./ci-author.ts";
 export { createImplementer } from "./implementer.ts";
 export { createPublisher } from "./publisher.ts";
 export { createInspector } from "./inspector.ts";

@@ -17,6 +17,7 @@ import {
   upgradeRequestSchema,
   type CheckPurpose,
   type ElevationGrant,
+  type ElevationRequest,
   type Phase,
   type WorkerId,
 } from "@safe-upgrade/domain";
@@ -115,13 +116,29 @@ async function runWorker(
 
   return {
     ...settled,
-    // Kept from the first attempt even when the retry succeeded, so the audit and the
-    // report still show what was asked for and approved.
-    ...(update.elevationRequests === undefined ? {} : { elevationRequests: update.elevationRequests }),
+    // When a retry happened, both attempts' requests. The first attempt's are kept so the
+    // record still shows what was asked for and approved; the retry's are kept because a
+    // retry can ask for something new, and dropping that would leave a run waiting on an
+    // approval it never reported needing.
+    ...(settled === update ? {} : mergedRequests(update, settled)),
     step: 1,
     workerAttempts: { [worker]: 1 },
     activeSessionRef: null,
   };
+}
+
+function mergedRequests(
+  first: UpgradeStateUpdate,
+  second: UpgradeStateUpdate,
+): Pick<UpgradeStateUpdate, "elevationRequests"> {
+  const requests = [...requestsIn(first), ...requestsIn(second)];
+  return requests.length === 0 ? {} : { elevationRequests: requests };
+}
+
+/** An update's elevation requests as a plain list, ignoring a channel overwrite. */
+function requestsIn(update: UpgradeStateUpdate): readonly ElevationRequest[] {
+  const requests = update.elevationRequests;
+  return Array.isArray(requests) ? requests : [];
 }
 
 function newlyApprovedRequests(
@@ -130,10 +147,7 @@ function newlyApprovedRequests(
   grants: readonly ElevationGrant[],
   already: readonly ApprovedElevation[],
 ): readonly ApprovedElevation[] {
-  const requests = update.elevationRequests;
-  if (requests === undefined || !Array.isArray(requests)) {
-    return [];
-  }
+  const requests = requestsIn(update);
   const seen = new Set(already.map(({ request }) => request.id));
   const approved: ApprovedElevation[] = [];
   for (const request of requests) {
@@ -231,6 +245,9 @@ export function createNodes(dependencies: NodeDependencies): Readonly<Record<Pha
         config: dependencies.config,
         audit: dependencies.audit,
         ...(dependencies.clock === undefined ? {} : { clock: dependencies.clock }),
+        ...(dependencies.elevationGrants === undefined
+          ? {}
+          : { elevationGrants: dependencies.elevationGrants }),
       });
       return {
         step: 1,

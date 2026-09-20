@@ -92,6 +92,7 @@ export function deriveFindings(input: DerivationInput): Derivation {
       // versions CI runs, and marking it as needing a source change would keep the
       // implementer eligible forever over something it cannot do anything about.
       noSourceChangeRequired: true,
+      requiredNodeRange: nodeBump.target,
     });
   }
 

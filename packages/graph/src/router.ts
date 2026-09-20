@@ -17,7 +17,7 @@
  */
 
 import { DecisionEngineError } from "@safe-upgrade/domain";
-import type { RouteDecision, WorkerId } from "@safe-upgrade/domain";
+import type { ElevationGrant, RouteDecision, WorkerId } from "@safe-upgrade/domain";
 import type { AuditLog } from "@safe-upgrade/evidence";
 import type { DecisionEngine, RouteInput } from "@safe-upgrade/jev";
 import { deterministicFallback, validateRouteChoice } from "@safe-upgrade/jev";
@@ -42,14 +42,20 @@ export interface RouterOptions {
   readonly config: RouterConfig;
   readonly audit: AuditLog;
   readonly clock?: () => Date;
+  /** Approvals from outside the run, so a worker waiting on one is not offered. */
+  readonly elevationGrants?: readonly ElevationGrant[];
 }
 
 /** Build the compact state the engine sees. Never files, logs, or release text. */
-export function buildRouteInput(state: UpgradeState, config: EligibilityConfig): RouteInput {
+export function buildRouteInput(
+  state: UpgradeState,
+  config: EligibilityConfig,
+  grants: readonly ElevationGrant[] = [],
+): RouteInput {
   const verified = new Set(state.verifiedFindingIds);
   return {
     currentPhase: state.phase,
-    eligibleActions: eligibleActions(state, config),
+    eligibleActions: eligibleActions(state, config, grants),
     unresolvedFindings: unresolvedFindings(state).map((finding) => ({
       id: finding.id,
       summary: finding.releaseClaim.slice(0, 280),
@@ -73,7 +79,7 @@ export interface Route {
 export async function decideRoute(state: UpgradeState, options: RouterOptions): Promise<Route> {
   const { engine, config, audit } = options;
   const now = options.clock ?? (() => new Date());
-  const input = buildRouteInput(state, config);
+  const input = buildRouteInput(state, config, options.elevationGrants ?? []);
   const candidates = input.eligibleActions.map((candidate) => candidate.action);
 
   const finish = (

@@ -80,8 +80,8 @@ function commitMessage(context: RunContext, findings: readonly MigrationFinding[
   const lines = [
     `Upgrade ${packageName} to ${targetVersion}`,
     "",
-    `Automated by a safe-upgrade run. Every change is attributed to a worker in the`,
-    `run's audit log, and the run branch is ${context.request.runId}.`,
+    "Automated by a safe-upgrade run. Every change is attributed to a worker in the",
+    `run's audit log, under run id ${context.request.runId}.`,
   ];
   if (findings.length > 0) {
     lines.push("", "Findings addressed:");
@@ -153,7 +153,7 @@ function pullRequestBody(context: RunContext, input: WorkerInput): string {
     }
   }
 
-  const notEstablished = state.result?.unverifiedClaims ?? state.blockingConditions;
+  const notEstablished = limitations(context, input);
   if (notEstablished.length > 0) {
     sections.push("", "## What this run does not establish", "");
     for (const claim of notEstablished) {
@@ -162,6 +162,43 @@ function pullRequestBody(context: RunContext, input: WorkerInput): string {
   }
 
   return `${sections.join("\n")}\n`;
+}
+
+/**
+ * The section a reviewer should read first, built from what the publisher can see.
+ *
+ * Not taken from the classified result, which does not exist yet: the run is classified
+ * after publishing, so reaching for `state.result` here silently produced nothing and
+ * the section never appeared in a single pull request. Assembling it from state means
+ * the claim is made from the same evidence the classifier will use.
+ */
+function limitations(context: RunContext, input: WorkerInput): readonly string[] {
+  const { state } = input;
+  const claims: string[] = [...state.highSeverityUncertainty, ...state.blockingConditions];
+
+  for (const finding of state.findings) {
+    if (!state.verifiedFindingIds.includes(finding.id)) {
+      claims.push(`\`${finding.id}\` has no verification path, so nothing here would catch a regression in it`);
+    }
+  }
+  for (const check of latestChecksByPurpose(state.postChangeChecks)) {
+    if (check.outcome !== "passed") {
+      claims.push(`the \`${check.command.purpose}\` check ${check.outcome}`);
+    }
+  }
+  for (const purpose of context.absentChecks) {
+    claims.push(`this repository defines no runnable \`${purpose}\` script, so that is ungated here and after merge`);
+  }
+  if (state.testAssessment?.sufficient === false) {
+    claims.push("the test suite was judged not to cover everything this change touches");
+  }
+  if (state.ciAssessment?.sufficient !== true) {
+    claims.push("CI does not run every check this change was verified against");
+  }
+  if (!context.sourceClean) {
+    claims.push("the checkout this run started from had uncommitted changes, which are not part of this branch");
+  }
+  return claims;
 }
 
 function ownersOf(changes: readonly FileChange[]): readonly string[] {

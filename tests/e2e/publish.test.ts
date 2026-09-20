@@ -158,6 +158,12 @@ describeE2E("publishing a verified upgrade", () => {
       expect(body).toContain("implementer");
       expect(body).toContain("update_manifest_field");
       expect(body).not.toContain("test-token");
+
+      // The section a reviewer should read first, and the one that is easiest to lose:
+      // it was previously read off the classified result, which does not exist yet at
+      // publish time, so it silently rendered as nothing in every pull request.
+      expect(body).toContain("## What this run does not establish");
+      expect(body).toMatch(/no runnable `(typecheck|lint)` script/);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       rmSync(artifacts, { recursive: true, force: true });

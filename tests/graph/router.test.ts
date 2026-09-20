@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { AuditLog } from "@safe-upgrade/evidence";
 import { FakeDecisionEngine } from "@safe-upgrade/jev";
+import { elevationRequest } from "@safe-upgrade/domain";
 import type { UpgradeRequest } from "@safe-upgrade/domain";
 import {
   ACTION_WORKER,
@@ -60,6 +61,7 @@ function stateWithChoices(overrides: Partial<UpgradeState> = {}): UpgradeState {
     highSeverityUncertainty: [],
     prohibitedActions: [],
     pendingApprovals: [],
+    elevationRequests: [],
     approvalGranted: false,
     draftPullRequestUrl: null,
     result: null,
@@ -82,10 +84,40 @@ describe("candidate construction", () => {
     const candidates = eligibleActions(stateWithChoices(), config).map((entry) => entry.action);
     expect(candidates).toContain("implement");
     expect(candidates).toContain("assess_verification");
-    expect(candidates).toContain("configure_ci");
     // Nothing has changed yet, so there is nothing to verify or publish.
     expect(candidates).not.toContain("verify");
     expect(candidates).not.toContain("publish_draft");
+  });
+
+  it("does not configure CI for an upgrade that has not been made yet", () => {
+    // A workflow added now would say it runs the checks this upgrade was verified
+    // against, which is not true of a run whose findings are still outstanding.
+    const outstanding = eligibleActions(stateWithChoices(), config).map((entry) => entry.action);
+    expect(outstanding).not.toContain("configure_ci");
+
+    const done = eligibleActions(
+      stateWithChoices({ addressedFindingIds: ["f1", "f2"] }),
+      config,
+    ).map((entry) => entry.action);
+    expect(done).toContain("configure_ci");
+  });
+
+  it("withholds a worker that is waiting on an approval nobody has given", () => {
+    // It asked, it wrote nothing, and nothing has changed since: routing to it again
+    // would produce the same request until its attempts ran out.
+    const request = elevationRequest({
+      worker: "implementer",
+      capability: "update_manifest_field",
+      arguments: { path: "package.json", field: "type", value: "module" },
+      reason: "the target is ESM-only",
+      findingIds: ["f1"],
+    });
+    const waiting = stateWithChoices({ elevationRequests: [request] });
+
+    expect(eligibleActions(waiting, config).map((entry) => entry.action)).not.toContain("implement");
+    // Granted, it is offered again, because now the retry can do something different.
+    const grants = [{ id: request.id, approvedBy: "someone", approvedAt: "2026-01-01T00:00:00.000Z" }];
+    expect(eligibleActions(waiting, config, grants).map((entry) => entry.action)).toContain("implement");
   });
 
   it("never offers publish_draft before verification passes", () => {
@@ -127,18 +159,18 @@ describe("candidate construction", () => {
 describe("engine responses", () => {
   it("follows a confident choice from the candidate set", async () => {
     const engine = new FakeDecisionEngine({
-      script: [{ kind: "choose", action: "configure_ci", confidence: 0.95 }],
+      script: [{ kind: "choose", action: "assess_verification", confidence: 0.95 }],
     });
     const route = await decideRoute(stateWithChoices(), { engine, config, audit });
 
-    expect(route.decision.selected).toBe("configure_ci");
+    expect(route.decision.selected).toBe("assess_verification");
     expect(route.decision.source).toBe("jev");
-    expect(route.worker).toBe(ACTION_WORKER.configure_ci);
+    expect(route.worker).toBe(ACTION_WORKER.assess_verification);
   });
 
   it("falls back deterministically when confidence is below the threshold", async () => {
     const engine = new FakeDecisionEngine({
-      script: [{ kind: "choose", action: "configure_ci", confidence: 0.2 }],
+      script: [{ kind: "choose", action: "assess_verification", confidence: 0.2 }],
     });
     const route = await decideRoute(stateWithChoices(), { engine, config, audit });
 
@@ -146,7 +178,7 @@ describe("engine responses", () => {
     expect(route.decision.confidence).toBe(0.2);
     expect(route.decision.fallbackReason).toContain("below the 0.6 threshold");
     // Spec order: covering a finding that has no verification path outranks
-    // implementing it, which outranks configuring CI.
+    // implementing it.
     expect(route.decision.selected).toBe("author_tests");
   });
 
@@ -172,12 +204,12 @@ describe("engine responses", () => {
 
   it("retries once on a transport failure, then falls back", async () => {
     const engine = new FakeDecisionEngine({
-      script: [{ kind: "unavailable" }, { kind: "choose", action: "configure_ci", confidence: 0.95 }],
+      script: [{ kind: "unavailable" }, { kind: "choose", action: "assess_verification", confidence: 0.95 }],
     });
     const route = await decideRoute(stateWithChoices(), { engine, config, audit });
 
     expect(engine.routeCalls).toHaveLength(2);
-    expect(route.decision.selected).toBe("configure_ci");
+    expect(route.decision.selected).toBe("assess_verification");
     expect(route.decision.source).toBe("jev");
   });
 
@@ -215,7 +247,7 @@ describe("audit trail", () => {
     expect(payload.selected).toBe("implement");
     expect(payload.source).toBe("jev");
     expect(payload.confidence).toBe(0.88);
-    expect(payload.candidates).toContain("configure_ci");
+    expect(payload.candidates).toContain("assess_verification");
     expect(payload.eligibilityReasons).toMatchObject({ implement: expect.any(String) });
   });
 });

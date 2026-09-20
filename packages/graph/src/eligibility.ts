@@ -90,6 +90,13 @@ const RULES: readonly Rule[] = [
   {
     action: "configure_ci",
     evaluate: (state) => {
+      if (unresolvedFindings(state).length > 0) {
+        // Not yet, rather than never. Configuring CI for an upgrade that has not been
+        // made writes a workflow whose stated reason — that these are the checks the
+        // upgrade was verified against — is not true, and a run blocked waiting for an
+        // approval would otherwise spend its remaining steps doing exactly that.
+        return null;
+      }
       if (state.ciAssessment === null) {
         // Deliberately eligible. Only the CI author can establish what CI is missing,
         // so requiring an assessment first means no action ever sets one and `ciSufficient`
@@ -162,7 +169,22 @@ const RULES: readonly Rule[] = [
  * `finalize` is appended when nothing else qualifies, so the graph always has a
  * terminal move available and can never deadlock.
  */
-export function eligibleActions(state: UpgradeState, config: EligibilityConfig): readonly RouteCandidate[] {
+/** Whether this worker has already asked for something nobody has granted. */
+function awaitingApproval(
+  state: UpgradeState,
+  worker: string,
+  grants: readonly ElevationGrant[],
+): boolean {
+  return state.elevationRequests.some(
+    (request) => request.worker === worker && grantFor(request, grants) === null,
+  );
+}
+
+export function eligibleActions(
+  state: UpgradeState,
+  config: EligibilityConfig,
+  grants: readonly ElevationGrant[] = [],
+): readonly RouteCandidate[] {
   const legal = new Set(TRANSITIONS.route);
   const candidates: RouteCandidate[] = [];
 
@@ -173,6 +195,13 @@ export function eligibleActions(state: UpgradeState, config: EligibilityConfig):
     const worker = ACTION_WORKER[rule.action];
     if (worker !== null && (state.workerAttempts[worker] ?? 0) >= config.maxWorkerAttempts) {
       continue; // Out of attempts. Retrying the same worker will not help.
+    }
+    if (worker !== null && awaitingApproval(state, worker, grants)) {
+      // Nor will retrying a worker that is waiting on a person. It asked, it wrote
+      // nothing, and nothing about the run has changed since — so it would ask again,
+      // and do that until its attempts ran out. The request is already reported as a
+      // pending approval, which is what actually moves the run forward.
+      continue;
     }
     const reason = rule.evaluate(state, config);
     if (reason !== null) {

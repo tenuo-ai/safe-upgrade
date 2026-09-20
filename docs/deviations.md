@@ -213,6 +213,22 @@ together is a decision this system does not make.
 It also means a repository accumulates a second workflow rather than a tidier first
 one. That is the trade, taken deliberately.
 
+## A runtime requirement is discharged only when both halves hold
+
+Pinning a Node version in CI is not on its own enough to settle a raised requirement.
+The repository's own `engines.node` has to agree: a package declaring `>=10` while its
+dependency needs 12 is broken for whoever installs it on Node 10, whatever CI runs. The
+CI author can read `engines` but cannot edit it, so a disagreement leaves the finding
+unaddressed and the run short of `verified` with that as the reason.
+
+Version ranges are compared at major granularity, because `node-version: "22"` resolves
+to whichever 22.x is newest. That makes lower bounds safe to read loosely and forces
+upper bounds to be read strictly: `<22.5` is treated as unsatisfied, because the version
+that actually runs is not pinned that finely. Ranges in forms the comparison does not
+fully cover — `~`, `x` ranges, hyphen ranges, bare versions — return "unknown" rather
+than an approximation, and unknown leaves the finding unaddressed. An approximation here
+would become a claim that a runtime requirement is met.
+
 ## CI coverage is read from `run:` lines, and errs towards missing
 
 There is no YAML parser here, and a real one would not settle the question anyway: a
