@@ -22,14 +22,19 @@ import type { ElevationGrant } from "@safe-upgrade/domain";
 
 export interface ParsedArguments {
   readonly repositoryPath: string;
-  readonly packageName: string;
-  readonly targetVersion: string;
+  readonly packageName: string | undefined;
+  readonly targetVersion: string | undefined;
+  readonly companions: readonly { readonly packageName: string; readonly targetVersion: string }[];
+  readonly workspace: string | undefined;
   readonly runId: string | undefined;
   readonly artifactsDirectory: string | undefined;
   readonly approvals: readonly ElevationGrant[];
   readonly publishApproved: boolean;
   readonly createDraftPullRequest: boolean;
   readonly githubRepository: string | undefined;
+  readonly commentPullRequest: number | undefined;
+  /** Fill the package, version, and pull number from a GitHub Actions event. */
+  readonly fromEvent: boolean;
   readonly allowTransitive: boolean;
   readonly partialAllowed: boolean;
   readonly format: "markdown" | "json";
@@ -71,11 +76,15 @@ const TAKES_VALUE = new Set([
   "--format",
   "--engine",
   "--confidence",
+  "--comment-pr",
+  "--companion",
+  "--workspace",
 ]);
 
 export function parseArguments(argv: readonly string[], now: () => Date = () => new Date()): ParsedArguments {
   const values = new Map<string, string>();
   const approveIds: string[] = [];
+  const companionSpecs: string[] = [];
   const flags = new Set<string>();
   const positional: string[] = [];
 
@@ -114,21 +123,37 @@ export function parseArguments(argv: readonly string[], now: () => Date = () => 
     }
     if (name === "--approve") {
       approveIds.push(value);
+    } else if (name === "--companion") {
+      companionSpecs.push(value);
     } else {
       values.set(name, value);
     }
   }
 
-  if (positional.length === 0) {
+  if (positional.length === 0 && !flags.has("--from-event")) {
     throw new UsageError("name the package to upgrade, as name@version");
   }
   if (positional.length > 1) {
     throw new UsageError(
-      `one package per run, and ${String(positional.length)} were given. A run establishes a claim about one upgrade.`,
+      `one positional package, and ${String(positional.length)} were given. Further packages belong on --companion name@version.`,
     );
   }
 
-  const { packageName, targetVersion } = parseSpecifier(positional[0] ?? "");
+  const named =
+    positional.length === 1 ? parseSpecifier(positional[0] ?? "") : { packageName: undefined, targetVersion: undefined };
+  const companions = companionSpecs.map((spec) => parseSpecifier(spec));
+  if (companions.length > 8) {
+    throw new UsageError("--companion accepts at most 8 further packages");
+  }
+  const names = new Set<string>(named.packageName === undefined ? [] : [named.packageName]);
+  for (const companion of companions) {
+    if (names.has(companion.packageName)) {
+      throw new UsageError(`${companion.packageName} was named more than once`);
+    }
+    names.add(companion.packageName);
+  }
+  const workspaceRaw = values.get("--workspace");
+  const workspace = workspaceRaw === undefined ? undefined : normalizeWorkspaceFlag(workspaceRaw);
   const approvals = buildApprovals(approveIds, values.get("--approved-by"), now);
 
   const githubRepository = values.get("--github-repository");
@@ -161,18 +186,32 @@ export function parseArguments(argv: readonly string[], now: () => Date = () => 
     }
   }
 
+  const commentRaw = values.get("--comment-pr");
+  let commentPullRequest: number | undefined;
+  if (commentRaw !== undefined) {
+    if (!/^[1-9]\d{0,8}$/.test(commentRaw)) {
+      throw new UsageError(`--comment-pr must be a pull request number, not ${commentRaw}`);
+    }
+    commentPullRequest = Number(commentRaw);
+  }
+
   const artifacts = values.get("--artifacts");
   return {
     repositoryPath: resolve(values.get("--repository") ?? process.cwd()),
-    packageName,
-    targetVersion,
+    packageName: named.packageName,
+    targetVersion: named.targetVersion,
+    companions,
+    workspace,
     runId: values.get("--run-id"),
     artifactsDirectory: artifacts === undefined ? undefined : resolve(artifacts),
     approvals,
     publishApproved: flags.has("--publish"),
-    // Asking to push implies wanting the draft it pushes for; the reverse is not true.
+    // Either flag requests a draft if verification passes. `--publish` is kept so
+    // existing scripts keep working; it is no longer a second gate after `--draft-pr`.
     createDraftPullRequest: flags.has("--draft-pr") || flags.has("--publish"),
     githubRepository,
+    commentPullRequest,
+    fromEvent: flags.has("--from-event"),
     allowTransitive: flags.has("--allow-transitive"),
     partialAllowed: flags.has("--partial-allowed"),
     format,
@@ -186,6 +225,7 @@ const KNOWN_FLAGS = new Set([
   "--quiet",
   "--publish",
   "--draft-pr",
+  "--from-event",
   "--allow-transitive",
   "--partial-allowed",
   "--help",
@@ -199,6 +239,21 @@ export function wantsHelp(argv: readonly string[]): boolean {
 
 export function wantsVersion(argv: readonly string[]): boolean {
   return argv.includes("--version");
+}
+
+function normalizeWorkspaceFlag(value: string): string {
+  const trimmed = value.trim().replace(/\\/g, "/");
+  const withoutDot = trimmed.startsWith("./") ? trimmed.slice(2) : trimmed;
+  const withoutSlash = withoutDot.startsWith("/") ? withoutDot.slice(1) : withoutDot;
+  if (
+    withoutSlash === "" ||
+    withoutSlash.split("/").includes("..") ||
+    withoutSlash.includes("\0") ||
+    !/^[A-Za-z0-9._@-][A-Za-z0-9._/@-]*$/.test(withoutSlash)
+  ) {
+    throw new UsageError(`--workspace must be a repository-relative path, not ${value}`);
+  }
+  return withoutSlash.replace(/\/+$/, "");
 }
 
 function parseSpecifier(specifier: string): { packageName: string; targetVersion: string } {

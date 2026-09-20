@@ -20,8 +20,11 @@ export type {
   RunStatus,
   TestAssessment,
   UpgradeRequest,
+  UpgradeTarget,
+  CompanionFact,
   WorkerId,
 } from "./types.ts";
+export { currentVersionOf, requestedUpdates, upgradeTargets } from "./types.ts";
 
 export {
   absolutePathSchema,
@@ -36,6 +39,7 @@ export {
   parseOrThrow,
   releaseEvidenceSchema,
   upgradeRequestSchema,
+  upgradeTargetSchema,
 } from "./schemas.ts";
 
 export type { ClassificationInput } from "./result.ts";

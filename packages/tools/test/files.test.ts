@@ -23,6 +23,8 @@ beforeEach(() => {
     defaultBranch: "main",
     requestedPackage: "left-pad",
     targetVersion: "1.3.0",
+    requestedUpdates: { "left-pad": "1.3.0" },
+    workspaceSelector: "",
     limits: DEFAULT_LIMITS,
   };
   tools = createFileTools(context);

@@ -35,13 +35,63 @@ export type PackageManager = "npm" | "pnpm" | "yarn";
 
 export type CheckPurpose = "install" | "test" | "typecheck" | "lint" | "build";
 
+/** One exact package and version this run may move. */
+export interface UpgradeTarget {
+  readonly packageName: string;
+  readonly targetVersion: string;
+}
+
 export interface UpgradeRequest {
   readonly runId: string;
   readonly repositoryPath: string;
   readonly packageName: string;
   readonly targetVersion: string;
+  /**
+   * Further exact packages this run may move, with the primary.
+   *
+   * Empty on a single-package run. Each entry is a name and version the
+   * command line or a grouped Dependabot event named; nothing else is added
+   * here because a peer that was only inferred would widen the ceiling.
+   */
+  readonly companions: readonly UpgradeTarget[];
+  /**
+   * Workspace directory this run upgrades in, relative to the repository root.
+   *
+   * Empty means the root. A Dependabot title's `in /packages/app` and `--workspace`
+   * both land here as `packages/app`.
+   */
+  readonly workspace: string;
   readonly allowTransitive: boolean;
   readonly createDraftPullRequest: boolean;
+}
+
+/** The primary package and every companion, in that order. */
+export function upgradeTargets(request: UpgradeRequest): readonly UpgradeTarget[] {
+  return [
+    { packageName: request.packageName, targetVersion: request.targetVersion },
+    ...request.companions,
+  ];
+}
+
+/** Name to exact version, for ceilings and the tool-body pair check. */
+export function requestedUpdates(request: UpgradeRequest): Readonly<Record<string, string>> {
+  const updates: Record<string, string> = {};
+  for (const target of upgradeTargets(request)) {
+    updates[target.packageName] = target.targetVersion;
+  }
+  return updates;
+}
+
+/** The version installed today for a package this run named. */
+export function currentVersionOf(
+  facts: RepositoryFacts,
+  packageName: string,
+  primaryPackage: string,
+): string {
+  if (packageName === primaryPackage) {
+    return facts.currentVersion;
+  }
+  return facts.companions.find((entry) => entry.packageName === packageName)?.currentVersion ?? "";
 }
 
 export interface CommandSpec {
@@ -68,8 +118,31 @@ export interface RepositoryFacts {
   readonly currentVersion: string;
   /** What the manifest permits, which is usually a range and is what the edit replaces. */
   readonly declaredRange: string;
+  /**
+   * Workspace this run is scoped to, relative to the repository root.
+   *
+   * Empty means the root package. Used as the npm/pnpm `--workspace` / `--filter`
+   * path. Yarn needs a package name, which is `workspaceSelector` when the
+   * manager is yarn.
+   */
+  readonly workspace: string;
+  /**
+   * Argument the package manager wants when scoping a command.
+   *
+   * Path for npm and pnpm, package name for yarn, empty at the root.
+   */
+  readonly workspaceSelector: string;
+  readonly workspacePackageName: string;
+  /** Installed versions of companion packages, resolved the same way as `currentVersion`. */
+  readonly companions: readonly CompanionFact[];
   readonly verificationCommands: readonly CommandSpec[];
   readonly existingCiFiles: readonly string[];
+}
+
+export interface CompanionFact {
+  readonly packageName: string;
+  readonly currentVersion: string;
+  readonly declaredRange: string;
 }
 
 export type ReleaseSourceType = "registry" | "release" | "changelog" | "migration_guide";
@@ -124,6 +197,17 @@ export interface MigrationFinding {
    * requirement and the old one — so anything parsing it is guessing which is which.
    */
   readonly requiredNodeRange?: string;
+  /**
+   * A removed export whose replacement the release note and the new surface agree on.
+   *
+   * Present only when the old name is gone, the new name exists, and the note
+   * says one became the other. The implementer may then rename call sites.
+   */
+  readonly replacement?: {
+    readonly packageName: string;
+    readonly from: string;
+    readonly to: string;
+  };
 }
 
 export type CheckOutcome = "passed" | "failed" | "timed_out" | "not_run";

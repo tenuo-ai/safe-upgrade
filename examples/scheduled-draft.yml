@@ -1,0 +1,35 @@
+# Open a draft when you already know the exact version to move to.
+#
+# This is the scheduled / "new version exists" path. Name the package and version
+# yourself (or have something else resolve "latest" to an exact version first).
+# A range is refused: every claim a run makes is about one version it read.
+
+name: Draft a known upgrade
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: name@version, exact
+        required: true
+
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.18"
+
+      - name: Upgrade and open a draft if verified
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          safe-upgrade "${{ inputs.package }}" --draft-pr --quiet
+        # Until the CLI is on PATH:
+        # node --experimental-strip-types "$SAFE_UPGRADE/packages/cli/bin/safe-upgrade.mjs" "${{ inputs.package }}" --draft-pr --quiet

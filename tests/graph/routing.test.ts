@@ -205,7 +205,7 @@ describe("failure recovery", () => {
 });
 
 describe("approval gate", () => {
-  it("pauses at human_required when a draft pull request is not approved", async () => {
+  it("opens a draft when one was requested and verification passed, without a second flag", async () => {
     harness = createGraphHarness({
       workers: {
         inspector: async () => ({ baselineChecks: [check("test", "passed")] }),
@@ -223,15 +223,17 @@ describe("approval gate", () => {
           lastVerification: "passed",
           ciAssessment: { sufficient: true, missingChecks: [] },
         }),
+        publisher: async () => ({
+          draftPullRequestUrl: "https://github.test/acme/app/pull/1",
+        }),
       },
     });
     const { status, state } = await harness.run({ createDraftPullRequest: true });
 
-    expect(status).toBe("human_required");
-    expect(state.pendingApprovals).toContain("draft pull request creation");
-    // Nothing was published, and the publisher never even ran.
-    expect(harness.visited).not.toContain("publisher");
-    expect(state.draftPullRequestUrl).toBeNull();
+    expect(harness.visited).toContain("publisher");
+    expect(state.draftPullRequestUrl).toBe("https://github.test/acme/app/pull/1");
+    expect(state.pendingApprovals).not.toContain("draft pull request creation");
+    expect(status).not.toBe("human_required");
   });
 });
 

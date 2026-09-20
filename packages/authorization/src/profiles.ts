@@ -113,7 +113,7 @@ export function workerProfiles(context: CeilingContext): Readonly<Record<WorkerI
       allow: pick(ceilings, [
         ...READ_ONLY,
         "read_registry_metadata",
-        // The researcher alone, and only for the one package this run may upgrade.
+        // The researcher alone, and only for the packages this run named.
         // Reading a version's exports means loading it, so no worker that writes
         // anything holds this.
         "read_package_exports",

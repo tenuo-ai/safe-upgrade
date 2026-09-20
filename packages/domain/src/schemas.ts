@@ -61,11 +61,24 @@ export const commandSpecSchema = z.object({
   timeoutMs: z.number().int().positive().max(1_800_000),
 });
 
+/** Repository-relative workspace path, or empty for the root. */
+const workspacePathSchema = z
+  .string()
+  .max(512)
+  .regex(/^(?:|[A-Za-z0-9._@-][A-Za-z0-9._/@-]*)$/, "workspace must be a relative path without '..'");
+
+export const upgradeTargetSchema = z.object({
+  packageName: packageNameSchema,
+  targetVersion: exactVersionSchema,
+});
+
 export const upgradeRequestSchema = z.object({
   runId: z.string().uuid(),
   repositoryPath: absolutePathSchema,
   packageName: packageNameSchema,
   targetVersion: exactVersionSchema,
+  companions: z.array(upgradeTargetSchema).max(8),
+  workspace: workspacePathSchema,
   allowTransitive: z.boolean(),
   createDraftPullRequest: z.boolean(),
 });
@@ -88,6 +101,16 @@ export const migrationFindingSchema = z.object({
   requiredChange: z.string().min(1).max(4000),
   confidence: z.number().min(0).max(1),
   noSourceChangeRequired: z.boolean().optional(),
+  needsHuman: z.boolean().optional(),
+  spansTestFiles: z.boolean().optional(),
+  requiredNodeRange: z.string().max(128).optional(),
+  replacement: z
+    .object({
+      packageName: packageNameSchema,
+      from: z.string().min(1).max(256),
+      to: z.string().min(1).max(256),
+    })
+    .optional(),
 });
 
 export const checkResultSchema = z.object({

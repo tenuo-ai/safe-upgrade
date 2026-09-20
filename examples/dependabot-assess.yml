@@ -1,0 +1,45 @@
+# Assess a Dependabot pull request and leave this run's verdict on it.
+#
+# Checkout the *base* branch, not the Dependabot head: the run applies the
+# upgrade itself. Running against a head that is already at the target version
+# is a no-op, and this tool refuses those.
+#
+# `--from-event` reads the package, version, and pull number from the Actions
+# event. It comments on that pull request for every status — verified, blocked,
+# and human_required. `--draft-pr` is optional: add it when you also want a
+# branch that carries any extra files this run wrote (tests, a workflow).
+#
+# The CLI is not published to npm yet. Point `SAFE_UPGRADE` at a checkout of
+# this repository, or put `safe-upgrade` on PATH once it is.
+
+name: Assess Dependabot upgrade
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  assess:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout the base, so the upgrade has somewhere to go
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+
+      - name: Use Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.18"
+
+      - name: Assess the bump and comment
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          safe-upgrade --from-event --quiet --format json
+        # Until the CLI is on PATH:
+        # node --experimental-strip-types "$SAFE_UPGRADE/packages/cli/bin/safe-upgrade.mjs" --from-event --quiet --format json

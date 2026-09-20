@@ -46,8 +46,13 @@ export {
 export type { BranchArgs, CommitArgs, CommitResult, GitStatus, ReadGitDiffArgs } from "./git.ts";
 export { assertBranchName, assertCommitMessage, createGitTools } from "./git.ts";
 
-export type { CreateDraftPrArgs, DraftPullRequest, GitHubToolOptions } from "./github.ts";
-export { createGitHubTools } from "./github.ts";
+export type {
+  CreateDraftPrArgs,
+  DraftPullRequest,
+  GitHubToolOptions,
+  PullRequestComment,
+} from "./github.ts";
+export { commentOnPullRequest, createGitHubTools } from "./github.ts";
 
 export type {
   UpdateManifestFieldArgs,

@@ -46,8 +46,21 @@ describe("naming what to upgrade", () => {
     expect(() => parse("postcss")).toThrow(UsageError);
   });
 
-  it("refuses two packages, because a run establishes one claim", () => {
-    expect(() => parse("postcss@8.4.35", "glob@9.3.5")).toThrow(/one package per run/);
+  it("refuses two positional packages", () => {
+    expect(() => parse("postcss@8.4.35", "glob@9.3.5")).toThrow(/one positional package/);
+  });
+
+  it("reads further exact packages on --companion", () => {
+    const parsed = parse("postcss@8.4.35", "--companion", "nanoid@5.0.0");
+    expect(parsed.companions).toEqual([{ packageName: "nanoid", targetVersion: "5.0.0" }]);
+  });
+
+  it("reads a workspace path, including Dependabot's leading slash", () => {
+    expect(parse("postcss@8.4.35", "--workspace", "/packages/app").workspace).toBe("packages/app");
+  });
+
+  it("refuses a workspace that walks up", () => {
+    expect(() => parse("postcss@8.4.35", "--workspace", "../etc")).toThrow(/repository-relative/);
   });
 
   it("refuses a name that is not a package name", () => {
@@ -100,15 +113,28 @@ describe("approvals", () => {
 });
 
 describe("publishing", () => {
-  it("treats wanting a draft as separate from agreeing to push", () => {
-    expect(parse("p@1.0.0", "--draft-pr").publishApproved).toBe(false);
+  it("treats --draft-pr as the request to open a draft", () => {
     expect(parse("p@1.0.0", "--draft-pr").createDraftPullRequest).toBe(true);
   });
 
-  it("reads approving the push as also wanting the draft", () => {
+  it("treats --publish as the same request, so existing scripts keep working", () => {
     const parsed = parse("p@1.0.0", "--publish");
     expect(parsed.publishApproved).toBe(true);
     expect(parsed.createDraftPullRequest).toBe(true);
+  });
+
+  it("reads a pull request number to comment on", () => {
+    expect(parse("p@1.0.0", "--comment-pr", "12").commentPullRequest).toBe(12);
+  });
+
+  it("refuses a pull request number that is not a number", () => {
+    expect(() => parse("p@1.0.0", "--comment-pr", "main")).toThrow(/pull request number/);
+  });
+
+  it("allows omitting the package when the event will name it", () => {
+    const parsed = parse("--from-event");
+    expect(parsed.fromEvent).toBe(true);
+    expect(parsed.packageName).toBeUndefined();
   });
 
   it("refuses a repository that is not owner/name", () => {

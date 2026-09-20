@@ -26,6 +26,7 @@ export type AuditEventType =
   | "ci_assessment_recorded"
   | "branch_published"
   | "draft_pull_request_opened"
+  | "review_comment_posted"
   | "release_evidence_missing"
   | "baseline_recorded"
   | "session_delegated"

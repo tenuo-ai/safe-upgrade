@@ -21,6 +21,7 @@ import {
   type RunReport,
 } from "@safe-upgrade/runner";
 import { parseArguments, UsageError, wantsHelp, wantsVersion, type ParsedArguments } from "./arguments.ts";
+import { readPullRequestEvent } from "./event.ts";
 import { chooseAuthorization } from "./authorization.ts";
 import { DeterministicEngine, JevDecisionEngine } from "@safe-upgrade/jev";
 import { PackageResolutionError, RepositoryError } from "@safe-upgrade/domain";
@@ -148,15 +149,30 @@ function toRunOptions(
   runId: string,
   streams: Streams,
 ): RunOptions {
+  const event = parsed.fromEvent ? readPullRequestEvent(streams.env) : undefined;
+  const packageName = parsed.packageName ?? event?.packageName;
+  const targetVersion = parsed.targetVersion ?? event?.targetVersion;
+  if (packageName === undefined || targetVersion === undefined) {
+    throw new UsageError("name the package to upgrade, as name@version");
+  }
+  const companions = parsed.companions.length > 0 ? parsed.companions : (event?.companions ?? []);
+  const workspace = parsed.workspace ?? event?.workspace;
+
+  const commentPullRequest = parsed.commentPullRequest ?? event?.pullRequestNumber;
+  const wantsGitHub = parsed.createDraftPullRequest || commentPullRequest !== undefined;
+  const githubRepository = wantsGitHub
+    ? (parsed.githubRepository ?? event?.repository ?? streams.env["GITHUB_REPOSITORY"])
+    : parsed.githubRepository;
   const token = streams.env["GITHUB_TOKEN"] ?? streams.env["GH_TOKEN"];
-  const wantsGitHub = parsed.githubRepository !== undefined;
-  if (wantsGitHub && (token === undefined || token === "")) {
+  if (wantsGitHub && (githubRepository === undefined || githubRepository === "")) {
     throw new UsageError(
-      "--github-repository needs GITHUB_TOKEN in the environment. It is not accepted as a flag.",
+      "--draft-pr and --comment-pr need --github-repository (or GITHUB_REPOSITORY), naming where the draft or comment goes",
     );
   }
-  if (parsed.publishApproved && !wantsGitHub) {
-    throw new UsageError("--publish needs --github-repository, naming where the draft goes");
+  if (wantsGitHub && (token === undefined || token === "")) {
+    throw new UsageError(
+      "talking to GitHub needs GITHUB_TOKEN in the environment. It is not accepted as a flag.",
+    );
   }
 
   return {
@@ -165,8 +181,10 @@ function toRunOptions(
       ? {}
       : { router: { confidenceThreshold: parsed.confidenceThreshold } }),
     repositoryPath: parsed.repositoryPath,
-    packageName: parsed.packageName,
-    targetVersion: parsed.targetVersion,
+    packageName,
+    targetVersion,
+    companions,
+    ...(workspace === undefined || workspace === "" ? {} : { workspace }),
     runId,
     // Defaulted rather than optional: a run that wrote no record is one nobody can check,
     // and the spec's artifact layout is `artifacts/<run-id>`.
@@ -174,10 +192,11 @@ function toRunOptions(
     approvals: parsed.approvals,
     publishApproved: parsed.publishApproved,
     createDraftPullRequest: parsed.createDraftPullRequest,
+    ...(commentPullRequest === undefined ? {} : { commentPullRequest }),
     allowTransitive: parsed.allowTransitive,
     partialAllowed: parsed.partialAllowed,
-    ...(wantsGitHub && token !== undefined && parsed.githubRepository !== undefined
-      ? { github: { repository: parsed.githubRepository, token } }
+    ...(wantsGitHub && token !== undefined && githubRepository !== undefined
+      ? { github: { repository: githubRepository, token } }
       : {}),
   };
 }

@@ -264,14 +264,26 @@ the retry replaces a pass that did nothing rather than repeating a pass that did
 something. It happens at most once, because the second attempt is handed the approval
 and has no reason to ask again.
 
-## Publishing is a separate approval from wanting a draft
+## Asking for a draft is the decision to open one
 
-`createDraftPullRequest` says a draft is wanted. `publishApproved` says someone agreed
-to push. The second is never inferred from the first, and neither is inferred from the
-run's own verdict: `verified` is this system's opinion of its own work, and treating it
-as permission to push would let the thing being checked decide it had passed.
+The spec treated wanting a draft and agreeing to push as two decisions, and an earlier
+version of this system did too: `--draft-pr` recorded the wish, and `--publish` was the
+second approval after `verified`. That gate made sense when a person was at a laptop and
+might not want a remote branch. It is the wrong rule when the draft is the product.
 
-A verified run that nobody approved for publishing says where the branch is and stops.
+Most upgrades — a Dependabot patch, a scheduled minor — need no elevation and no source
+edit. The second flag stopped every one of those from becoming a pull request. Asking
+for a draft at the start of the run is now the operator decision. If verification
+passes, the publisher is eligible. Elevation still stops the run. Merging still takes a
+person. `--publish` remains as an alias so existing scripts keep working.
+
+A Dependabot pull request is already the review surface. `--from-event` reads a single-
+package bump from that event and `--comment-pr` (implied) leaves the classified verdict
+on it, including `blocked` and `human_required`, which never reach the publisher. The
+comment is trusted code after the graph, not a worker: those statuses would otherwise
+have no GitHub object at all.
+
+## Reading a package's exports means loading it
 
 ## Reading a package's exports means loading it
 
@@ -293,8 +305,8 @@ So `read_package_exports` does that, bounded:
   output cap, a timeout, process-tree termination;
 - the child is handed the installed directory and nothing else: no repository path, no
   argument a worker chose. It prints names and exits;
-- the researcher alone holds the capability, bounded to the one package the run may
-  upgrade and to a version matching a semver pattern rather than a glob, because the
+- the researcher alone holds the capability, bounded to the packages the run named
+  and to a version matching a semver pattern rather than a glob, because the
   version reaches an installer argument;
 - an unreadable surface is recorded as a limit on what the run can conclude, not raised as
   a failure.
@@ -313,11 +325,16 @@ and "one name left and another arrived" is a coincidence often enough that actin
 would be guessing — guessing that puts an API which does not exist into source that has to
 compile.
 
-So the implementer does not attempt these. It reports the symbol, the files that reach it,
+So the implementer does not attempt a removal. It reports the symbol, the files that reach it,
 and the names the target added as somewhere to look, and the run ends `blocked`. That is a
 worse-sounding outcome than a rewritten lockfile and a green test suite, and a better one:
 the fixture for this case passes its tests at the target version, because the only covered
 call site is one that survives.
+
+The one exception is a rename both observations agree on: the old name is gone, the new
+name exists, and the release note says one became the other. That pair is structural
+enough to rewrite static member access and a same-name import. Anything the note says
+that is not in both surfaces is ignored, so a sentence cannot invent an API.
 
 Counting uses excludes the line that imports the name. That line has to change too, which
 is why it is left out rather than reported: "reaches it in two places" should mean two

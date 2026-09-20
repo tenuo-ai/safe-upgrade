@@ -17,13 +17,13 @@
  * persuaded.
  */
 
-import { ReleaseEvidenceError } from "@safe-upgrade/domain";
+import { currentVersionOf, ReleaseEvidenceError, upgradeTargets } from "@safe-upgrade/domain";
 import type { MigrationFinding, ReleaseEvidence } from "@safe-upgrade/domain";
 import type { UpgradeStateUpdate, WorkerFn, WorkerInput } from "@safe-upgrade/graph";
 import type { PublishedShape, RegistryMetadata } from "@safe-upgrade/tools";
 import type { RunContext } from "../context.ts";
 import { addedNames, removedNames } from "@safe-upgrade/tools";
-import { deriveFindings, relevantExtract } from "./derive.ts";
+import { deriveFindings, relevantExtract, renamePairsFromNote } from "./derive.ts";
 import type { ProseAssessment } from "./derive.ts";
 import { findMemberReferences, type MemberReference } from "./members.ts";
 import { findUsages, isSourceFile, type Usage } from "./usages.ts";
@@ -51,11 +51,13 @@ async function compareSurfaces(
   input: WorkerInput,
   context: RunContext,
   packageName: string,
+  currentVersion: string,
+  targetVersion: string,
   usages: readonly Usage[],
 ): Promise<SurfaceComparison> {
   const [before, after] = await Promise.all([
-    input.handle.tools.read_package_exports({ packageName, version: context.facts.currentVersion }),
-    input.handle.tools.read_package_exports({ packageName, version: context.request.targetVersion }),
+    input.handle.tools.read_package_exports({ packageName, version: currentVersion }),
+    input.handle.tools.read_package_exports({ packageName, version: targetVersion }),
   ]);
 
   const read = before.observed && after.observed;
@@ -81,51 +83,81 @@ function unique(values: readonly string[]): readonly string[] {
 
 export function createResearcher(context: RunContext): WorkerFn {
   return async (input: WorkerInput): Promise<UpgradeStateUpdate> => {
-    const { packageName, targetVersion } = context.request;
     const evidence: ReleaseEvidence[] = [];
+    const findings: MigrationFinding[] = [];
+    const uncertainty: string[] = [];
+    const named = new Set(upgradeTargets(context.request).map((target) => target.packageName));
+    let primaryUsages: readonly Usage[] = [];
+    let primarySurface: SurfaceComparison = { read: false, removed: [], added: [], references: [] };
+    let primaryCurrentShape: PublishedShape | undefined;
+    let primaryTargetShape: PublishedShape | undefined;
 
-    const current = await registryEvidence(input, packageName, context.facts.currentVersion, evidence);
-    const target = await registryEvidence(input, packageName, targetVersion, evidence);
+    for (const target of upgradeTargets(context.request)) {
+      const currentVersion = currentVersionOf(context.facts, target.packageName, context.request.packageName);
+      const current = await registryEvidence(input, target.packageName, currentVersion, evidence);
+      const next = await registryEvidence(input, target.packageName, target.targetVersion, evidence);
+      const documentIds = await proseEvidence(
+        input,
+        next.metadata,
+        currentVersion,
+        target.targetVersion,
+        evidence,
+      );
+      const usages = await scanUsages(input, context, target.packageName);
+      const surface = await compareSurfaces(
+        input,
+        context,
+        target.packageName,
+        currentVersion,
+        target.targetVersion,
+        usages,
+      );
+      const noteText = evidence
+        .filter((record) => record.sourceType !== "registry")
+        .map((record) => record.relevantExtract)
+        .join("\n");
+      const peers = Object.entries(next.metadata.peerDependencies)
+        .filter(([name]) => !named.has(name))
+        .map(([packageName, range]) => ({ packageName, range }));
 
-    const documentIds = await proseEvidence(
-      input,
-      target.metadata,
-      context.facts.currentVersion,
-      targetVersion,
-      evidence,
-    );
-    const usages = await scanUsages(input, context, packageName);
-    const surface = await compareSurfaces(input, context, packageName, usages);
+      const derivationInput = {
+        packageName: target.packageName,
+        currentVersion,
+        targetVersion: target.targetVersion,
+        currentShape: current.metadata.shape,
+        targetShape: next.metadata.shape,
+        usages,
+        removedMembers: surface.references,
+        addedNames: surface.added,
+        surfaceRead: surface.read,
+        shapeEvidenceIds: [current.evidenceId, next.evidenceId],
+        documentEvidenceIds: documentIds,
+        renamePairs: renamePairsFromNote(noteText, surface.removed, surface.added),
+        peerRequirements: peers,
+      };
 
-    const derivationInput = {
-      packageName,
-      currentVersion: context.facts.currentVersion,
-      targetVersion,
-      currentShape: current.metadata.shape,
-      targetShape: target.metadata.shape,
-      usages,
-      removedMembers: surface.references,
-      addedNames: surface.added,
-      surfaceRead: surface.read,
-      shapeEvidenceIds: [current.evidenceId, target.evidenceId],
-      documentEvidenceIds: documentIds,
-    };
+      const structural = deriveFindings(derivationInput);
+      const proseAssessment = await readReleaseProse(input, {
+        unexplained: structural.unexplainedMajorBump,
+        evidence,
+        packageName: target.packageName,
+        currentVersion,
+        targetVersion: target.targetVersion,
+        usages,
+        members: surface.references.map((reference) => reference.member),
+      });
+      const derived =
+        proseAssessment === null ? structural : deriveFindings({ ...derivationInput, proseAssessment });
+      findings.push(...derived.findings);
+      uncertainty.push(...derived.uncertainty);
 
-    // Derived once to see what structure explains, then again if a paragraph is the only thing
-    // left that could explain the rest. Deriving is pure and cheap, and doing it this way keeps
-    // every sentence about the outcome in one place instead of splicing text here.
-    const structural = deriveFindings(derivationInput);
-    const proseAssessment = await readReleaseProse(input, {
-      unexplained: structural.unexplainedMajorBump,
-      evidence,
-      packageName,
-      currentVersion: context.facts.currentVersion,
-      targetVersion,
-      usages,
-      members: surface.references.map((reference) => reference.member),
-    });
-    const { findings, uncertainty } =
-      proseAssessment === null ? structural : deriveFindings({ ...derivationInput, proseAssessment });
+      if (target.packageName === context.request.packageName) {
+        primaryUsages = usages;
+        primarySurface = surface;
+        primaryCurrentShape = current.metadata.shape;
+        primaryTargetShape = next.metadata.shape;
+      }
+    }
 
     input.audit.record({
       phase: "research",
@@ -134,13 +166,13 @@ export function createResearcher(context: RunContext): WorkerFn {
       payload: {
         evidenceIds: evidence.map((record) => record.id),
         findingIds: findings.map((finding) => finding.id),
-        callSites: usages.map((usage) => `${usage.file}:${String(usage.line)} (${usage.style})`),
-        currentShape: current.metadata.shape,
-        targetShape: target.metadata.shape,
-        surfaceRead: surface.read,
-        removedExports: surface.removed,
-        addedExports: surface.added,
-        reachedRemovedExports: surface.references.map(
+        callSites: primaryUsages.map((usage) => `${usage.file}:${String(usage.line)} (${usage.style})`),
+        currentShape: primaryCurrentShape,
+        targetShape: primaryTargetShape,
+        surfaceRead: primarySurface.read,
+        removedExports: primarySurface.removed,
+        addedExports: primarySurface.added,
+        reachedRemovedExports: primarySurface.references.map(
           (reference) => `${reference.file}:${String(reference.line)} ${reference.member}`,
         ),
         uncertainty,
@@ -437,7 +469,10 @@ async function scanUsages(
   packageName: string,
 ): Promise<readonly Usage[]> {
   const listed = await input.handle.tools.list_files({
-    root: context.facts.worktreePath,
+    root:
+      context.facts.workspace === ""
+        ? context.facts.worktreePath
+        : `${context.facts.worktreePath}/${context.facts.workspace}`,
     glob: "**/*",
   });
   const candidates = listed.filter(isSourceFile).slice(0, MAX_SCANNED_FILES);

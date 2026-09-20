@@ -25,6 +25,7 @@ export function resolveInstalledVersion(
   manager: PackageManager,
   lockfilePath: string,
   packageName: string,
+  workspace = "",
 ): string | null {
   let content: string;
   try {
@@ -35,12 +36,59 @@ export function resolveInstalledVersion(
 
   switch (manager) {
     case "npm":
-      return fromNpm(content, packageName);
+      return fromNpm(content, packageName, workspace);
     case "pnpm":
-      return fromPnpm(content, packageName);
+      return fromPnpm(content, packageName, workspace);
     case "yarn":
       return fromYarn(content, packageName);
   }
+}
+
+/**
+ * Every published version the lockfile records, keyed by package name.
+ *
+ * Used after an update to see what else moved. A name that appears at more than
+ * one version is kept as a list, so a nested copy changing is visible.
+ */
+export function lockfilePackageVersions(
+  manager: PackageManager,
+  lockfilePath: string,
+): Readonly<Record<string, readonly string[]>> {
+  let content: string;
+  try {
+    content = readFileSync(lockfilePath, "utf8");
+  } catch {
+    return {};
+  }
+  switch (manager) {
+    case "npm":
+      return npmVersionMap(content);
+    case "pnpm":
+      return pnpmVersionMap(content);
+    case "yarn":
+      return yarnVersionMap(content);
+  }
+}
+
+/** Packages that changed version and were not named on this run. */
+export function unexpectedLockfileMoves(
+  before: Readonly<Record<string, readonly string[]>>,
+  after: Readonly<Record<string, readonly string[]>>,
+  allowed: ReadonlySet<string>,
+): readonly string[] {
+  const names = new Set([...Object.keys(before), ...Object.keys(after)]);
+  const moved: string[] = [];
+  for (const name of [...names].sort()) {
+    if (allowed.has(name)) {
+      continue;
+    }
+    const previous = [...(before[name] ?? [])].sort().join(",");
+    const next = [...(after[name] ?? [])].sort().join(",");
+    if (previous !== next) {
+      moved.push(`${name} ${previous || "<absent>"} -> ${next || "<absent>"}`);
+    }
+  }
+  return moved;
 }
 
 /** True for a bare exact version, the one specifier that needs no lockfile. */
@@ -55,7 +103,7 @@ export function isExactVersion(specifier: string): boolean {
  * `node_modules/<name>`. A nested path is a different copy for some other dependent, so only
  * the root one is read. v1 keyed by name under `dependencies`.
  */
-function fromNpm(content: string, packageName: string): string | null {
+function fromNpm(content: string, packageName: string, workspace: string): string | null {
   let lock: unknown;
   try {
     lock = JSON.parse(content);
@@ -66,14 +114,65 @@ function fromNpm(content: string, packageName: string): string | null {
     return null;
   }
   const root = lock as Record<string, unknown>;
+  const packages = asRecord(root["packages"]);
 
-  const byPath = asRecord(root["packages"])?.[`node_modules/${packageName}`];
+  if (workspace.length > 0) {
+    const nested = versionOf(packages?.[`${workspace}/node_modules/${packageName}`]);
+    if (nested !== null) {
+      return nested;
+    }
+  }
+
+  const byPath = packages?.[`node_modules/${packageName}`];
   const fromPath = versionOf(byPath);
   if (fromPath !== null) {
     return fromPath;
   }
 
   return versionOf(asRecord(root["dependencies"])?.[packageName]);
+}
+
+function npmVersionMap(content: string): Readonly<Record<string, readonly string[]>> {
+  let lock: unknown;
+  try {
+    lock = JSON.parse(content);
+  } catch {
+    return {};
+  }
+  const packages = asRecord(asRecord(lock)?.["packages"]);
+  if (packages === undefined) {
+    return collectVersions(asRecord(asRecord(lock)?.["dependencies"]));
+  }
+  const collected: Record<string, Set<string>> = {};
+  for (const [path, entry] of Object.entries(packages)) {
+    const marker = "node_modules/";
+    const at = path.lastIndexOf(marker);
+    if (at === -1) {
+      continue;
+    }
+    const name = path.slice(at + marker.length);
+    const version = versionOf(entry);
+    if (version !== null) {
+      (collected[name] ??= new Set()).add(version);
+    }
+  }
+  return freezeVersionMap(collected);
+}
+
+function collectVersions(
+  dependencies: Record<string, unknown> | undefined,
+): Readonly<Record<string, readonly string[]>> {
+  const collected: Record<string, Set<string>> = {};
+  if (dependencies === undefined) {
+    return {};
+  }
+  for (const [name, entry] of Object.entries(dependencies)) {
+    const version = versionOf(entry);
+    if (version !== null) {
+      (collected[name] ??= new Set()).add(version);
+    }
+  }
+  return freezeVersionMap(collected);
 }
 
 /**
@@ -87,7 +186,7 @@ function fromNpm(content: string, packageName: string): string | null {
  * plain mappings, and the alternative is a YAML dependency whose own surface is larger than
  * this function.
  */
-function fromPnpm(content: string, packageName: string): string | null {
+function fromPnpm(content: string, packageName: string, workspace: string): string | null {
   const lines = content.split("\n");
   let inImporters = false;
   let inRoot = false;
@@ -112,8 +211,7 @@ function fromPnpm(content: string, packageName: string): string | null {
       continue;
     }
     if (indent === 2) {
-      // A project. Only the root project's resolutions describe this repository.
-      inRoot = trimmed === ".:" || trimmed === "'.':";
+      inRoot = pnpmImporterMatches(trimmed, workspace);
       inBlock = false;
       inPackage = false;
       continue;
@@ -147,6 +245,96 @@ function fromPnpm(content: string, packageName: string): string | null {
  * A pnpm version can carry the peers it was resolved against, as in
  * `1.4.16(@langchain/core@1.2.11)`, and a workspace link is not a published version at all.
  */
+function pnpmImporterMatches(header: string, workspace: string): boolean {
+  const name = unquote(header.replace(/:$/, ""));
+  if (workspace === "") {
+    return name === ".";
+  }
+  return name === workspace || name === `./${workspace}`;
+}
+
+function pnpmVersionMap(content: string): Readonly<Record<string, readonly string[]>> {
+  const collected: Record<string, Set<string>> = {};
+  let inPackages = false;
+  for (const line of content.split("\n")) {
+    if (line.trim() === "" || line.trimStart().startsWith("#")) {
+      continue;
+    }
+    const indent = line.length - line.trimStart().length;
+    const trimmed = line.trim();
+    if (indent === 0) {
+      inPackages = trimmed === "packages:";
+      continue;
+    }
+    if (!inPackages || indent !== 2 || !trimmed.endsWith(":")) {
+      continue;
+    }
+    const key = unquote(trimmed.replace(/:$/, ""));
+    const name = key.startsWith("@")
+      ? key.replace(/@[^@/]+(?:\(.+\))?$/, "")
+      : key.split("@")[0] ?? "";
+    const version = cleanPnpmVersion(key.slice(name.length).replace(/^@/, "").split("(")[0] ?? "");
+    if (name.length > 0 && version !== null) {
+      (collected[name] ??= new Set()).add(version);
+    }
+  }
+  return freezeVersionMap(collected);
+}
+
+function yarnVersionMap(content: string): Readonly<Record<string, readonly string[]>> {
+  const collected: Record<string, Set<string>> = {};
+  let current: string | null = null;
+  for (const line of content.split("\n")) {
+    if (line.trim() === "" || line.trimStart().startsWith("#")) {
+      continue;
+    }
+    const isHeader = !line.startsWith(" ") && !line.startsWith("\t");
+    if (isHeader) {
+      current = yarnHeaderName(line);
+      continue;
+    }
+    if (current === null) {
+      continue;
+    }
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("version")) {
+      continue;
+    }
+    const value = unquote(trimmed.replace(/^version\s*:?\s*/, "").trim());
+    if (isExactVersion(value)) {
+      (collected[current] ??= new Set()).add(value);
+    }
+    current = null;
+  }
+  return freezeVersionMap(collected);
+}
+
+function yarnHeaderName(header: string): string | null {
+  for (const descriptor of header.replace(/:\s*$/, "").split(",")) {
+    const text = unquote(descriptor.trim());
+    const at = text.lastIndexOf("@");
+    if (at <= 0) {
+      continue;
+    }
+    const name = text.slice(0, at);
+    if (LOCAL_PROTOCOLS.some((protocol) => text.slice(at + 1).startsWith(protocol))) {
+      continue;
+    }
+    return name;
+  }
+  return null;
+}
+
+function freezeVersionMap(
+  collected: Readonly<Record<string, ReadonlySet<string>>>,
+): Readonly<Record<string, readonly string[]>> {
+  const frozen: Record<string, readonly string[]> = {};
+  for (const [name, versions] of Object.entries(collected)) {
+    frozen[name] = [...versions].sort();
+  }
+  return frozen;
+}
+
 function cleanPnpmVersion(value: string): string | null {
   if (value.startsWith("link:") || value.startsWith("file:")) {
     return null;

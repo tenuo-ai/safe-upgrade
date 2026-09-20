@@ -13,9 +13,13 @@ export interface ToolContext {
   /** Branch the run may push. Anything else is refused by `push_branch`. */
   readonly runBranch: string;
   readonly defaultBranch: string;
-  /** The single package this run is allowed to upgrade. */
+  /** The primary package this run is allowed to upgrade. */
   readonly requestedPackage: string;
   readonly targetVersion: string;
+  /** Name to exact version for every package this run named. */
+  readonly requestedUpdates: Readonly<Record<string, string>>;
+  /** Workspace selector `run_check` and `update_dependency` may pass. Empty at root. */
+  readonly workspaceSelector: string;
   readonly limits: ToolLimits;
   /**
    * Fires when a tool body starts, which is only ever after authorization

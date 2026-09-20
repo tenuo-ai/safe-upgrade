@@ -125,10 +125,29 @@ describe("candidate construction", () => {
 
   it("never offers publish_draft before verification passes", () => {
     const candidates = eligibleActions(
-      stateWithChoices({ approvalGranted: true, lastVerification: "failed" }),
+      stateWithChoices({
+        request: { ...request, createDraftPullRequest: true },
+        lastVerification: "failed",
+      }),
       config,
     ).map((entry) => entry.action);
     expect(candidates).not.toContain("publish_draft");
+  });
+
+  it("offers publish_draft after verification when a draft was requested, without a second approval", () => {
+    const candidates = eligibleActions(
+      stateWithChoices({
+        request: { ...request, createDraftPullRequest: true },
+        lastVerification: "passed",
+        findings: [],
+        fileChanges: [
+          { path: "package-lock.json", beforeHash: null, afterHash: null, owner: "implementer", reason: "move" },
+        ],
+        ciAssessment: { sufficient: true, missingChecks: [] },
+      }),
+      config,
+    ).map((entry) => entry.action);
+    expect(candidates).toContain("publish_draft");
   });
 
   it("withholds a worker that has exhausted its attempts", () => {

@@ -72,7 +72,7 @@ function preferenceOrder(input: RouteInput): readonly { action: RoutableAction; 
   preferences.push(
     { action: "assess_verification", reason: "verification coverage has not been assessed" },
     { action: "verify", reason: "changes are ready for independent verification" },
-    { action: "publish_draft", reason: "verification passed and publishing is approved" },
+    { action: "publish_draft", reason: "verification passed and a draft was requested" },
     { action: "finalize", reason: "no further action is eligible" },
   );
 

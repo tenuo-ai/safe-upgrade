@@ -14,7 +14,7 @@
  * verifies in the run's worktree rather than a second one.
  */
 
-import type { CheckPurpose, CheckResult } from "@safe-upgrade/domain";
+import { upgradeTargets, type CheckPurpose, type CheckResult } from "@safe-upgrade/domain";
 import type { WorkerFn, WorkerInput } from "@safe-upgrade/graph";
 import type { UpgradeStateUpdate } from "@safe-upgrade/graph";
 import { checkOrder, recordCheck } from "./checks.ts";
@@ -53,7 +53,7 @@ export function createVerifier(options: RunContext): WorkerFn {
       const outcome = await handle.tools.run_check({
         kind: purpose,
         script,
-        workspace: "",
+        workspace: options.facts.workspaceSelector,
       });
       checks.push(recordCheck(audit, "verifier", "verify", outcome));
     }
@@ -113,7 +113,9 @@ function verifiedFindings(input: WorkerInput): readonly string[] {
  * target today is not the same claim: it resolves to something else tomorrow.
  */
 async function resolvesToTarget(input: WorkerInput, options: RunContext): Promise<boolean> {
-  const manifest = await input.handle.tools.read_file({ path: inWorktree(options, "package.json") });
+  const relative =
+    options.facts.workspace === "" ? "package.json" : `${options.facts.workspace}/package.json`;
+  const manifest = await input.handle.tools.read_file({ path: inWorktree(options, relative) });
   let parsed: unknown;
   try {
     parsed = JSON.parse(manifest.content);
@@ -125,17 +127,19 @@ async function resolvesToTarget(input: WorkerInput, options: RunContext): Promis
   }
   const blocks = ["dependencies", "devDependencies", "optionalDependencies"] as const;
   const record = parsed as Record<string, unknown>;
-  for (const block of blocks) {
-    const declared = record[block];
-    if (typeof declared !== "object" || declared === null) {
-      continue;
+  return upgradeTargets(options.request).every((target) => {
+    for (const block of blocks) {
+      const declared = record[block];
+      if (typeof declared !== "object" || declared === null) {
+        continue;
+      }
+      const specifier = (declared as Record<string, unknown>)[target.packageName];
+      if (typeof specifier === "string") {
+        return specifier === target.targetVersion;
+      }
     }
-    const specifier = (declared as Record<string, unknown>)[options.request.packageName];
-    if (typeof specifier === "string") {
-      return specifier === options.request.targetVersion;
-    }
-  }
-  return false;
+    return false;
+  });
 }
 
 /**

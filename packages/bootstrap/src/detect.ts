@@ -14,16 +14,19 @@
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { basename, join, relative, sep } from "node:path";
+import { basename, join } from "node:path";
 import { PackageResolutionError, RepositoryError } from "@safe-upgrade/domain";
-import { isExactVersion, resolveInstalledVersion } from "./installed.ts";
 import type {
   CheckPurpose,
   CommandSpec,
+  CompanionFact,
   PackageManager,
   RepositoryFacts,
+  UpgradeTarget,
 } from "@safe-upgrade/domain";
 import { assertSafeScriptName, screenScript } from "@safe-upgrade/tools";
+import { isExactVersion, resolveInstalledVersion } from "./installed.ts";
+import { expandWorkspacePatterns, resolveWorkspaceSelection } from "./workspaces.ts";
 
 /** Lockfile to manager. The file present on disk is what the manager obeys. */
 const LOCKFILES: ReadonlyArray<readonly [string, PackageManager]> = [
@@ -48,8 +51,12 @@ export interface DetectionRequest {
   /** Canonical worktree path from `isolateRepository`. */
   readonly worktreePath: string;
   readonly defaultBranch: string;
-  /** The one package this run may touch. */
+  /** The primary package this run may touch. */
   readonly packageName: string;
+  /** Further exact packages this run named, resolved against the same manifest. */
+  readonly companions?: readonly UpgradeTarget[];
+  /** Workspace path or package name. Empty means detect from where the package is declared. */
+  readonly workspace?: string;
   readonly commandTimeoutMs: number;
 }
 
@@ -79,20 +86,47 @@ export function detectRepositoryFacts(request: DetectionRequest): Detection {
   assertManagerAgreement(manifest, manager, lockfile);
   assertLockfileWritable(root, manager);
 
-  const declaredRange = resolveDeclaredVersion(manifest, request.packageName);
+  const workspaceRoots = detectWorkspaces(root, manager, manifest, warnings);
+  const workspaceNames = workspacePackageNames(root, workspaceRoots);
+  const workspace = resolveDeclaringWorkspace(
+    root,
+    request.packageName,
+    request.workspace ?? "",
+    workspaceRoots,
+    workspaceNames,
+    manifest,
+  );
+  const declaring = workspace === "" ? manifest : readManifest(join(root, workspace, "package.json"));
+  const declaredRange = resolveDeclaredVersion(declaring, request.packageName);
   const currentVersion = resolveCurrentVersion(
     manager,
     join(root, lockfile),
     request.packageName,
     declaredRange,
+    workspace,
   );
-  const workspaceRoots = detectWorkspaces(root, manager, manifest, warnings);
+  const companions = resolveCompanions(
+    declaring,
+    manager,
+    join(root, lockfile),
+    request.companions ?? [],
+    workspace,
+  );
+  const workspacePackageName = workspace === "" ? "" : (workspaceNames[workspace] ?? "");
+  const workspaceSelector = manager === "yarn" && workspace !== "" ? workspacePackageName : workspace;
   const manifests = [
     "package.json",
     ...workspaceRoots.map((directory) => join(directory, "package.json")),
   ].filter((candidate) => existsSync(join(root, candidate)));
 
-  const { commands, scripts, absent } = planChecks(manifest, manager, root, request.commandTimeoutMs, warnings);
+  const { commands, scripts, absent } = planChecks(
+    declaring,
+    manager,
+    root,
+    workspaceSelector,
+    request.commandTimeoutMs,
+    warnings,
+  );
 
   const facts: RepositoryFacts = {
     worktreePath: root,
@@ -103,6 +137,10 @@ export function detectRepositoryFacts(request: DetectionRequest): Detection {
     lockfile,
     currentVersion,
     declaredRange,
+    workspace,
+    workspaceSelector,
+    workspacePackageName,
+    companions,
     verificationCommands: [installCommand(manager, root, request.commandTimeoutMs), ...commands],
     existingCiFiles: detectCiFiles(root),
   };
@@ -284,11 +322,12 @@ function resolveCurrentVersion(
   lockfilePath: string,
   packageName: string,
   declaredRange: string,
+  workspace: string,
 ): string {
   if (isExactVersion(declaredRange)) {
     return declaredRange;
   }
-  const installed = resolveInstalledVersion(manager, lockfilePath, packageName);
+  const installed = resolveInstalledVersion(manager, lockfilePath, packageName, workspace);
   if (installed === null) {
     throw new PackageResolutionError(
       `${packageName} is declared as '${declaredRange}', and ${basename(lockfilePath)} does not say which version that resolved to. ` +
@@ -298,7 +337,104 @@ function resolveCurrentVersion(
   return installed;
 }
 
-function resolveDeclaredVersion(manifest: Manifest, packageName: string): string {
+function resolveCompanions(
+  manifest: Manifest,
+  manager: PackageManager,
+  lockfilePath: string,
+  companions: readonly UpgradeTarget[],
+  workspace: string,
+): readonly CompanionFact[] {
+  return companions.map((companion) => {
+    const declaredRange = resolveDeclaredVersion(manifest, companion.packageName);
+    return {
+      packageName: companion.packageName,
+      declaredRange,
+      currentVersion: resolveCurrentVersion(
+        manager,
+        lockfilePath,
+        companion.packageName,
+        declaredRange,
+        workspace,
+      ),
+    };
+  });
+}
+
+/**
+ * Which workspace (or the root) declares the primary package.
+ *
+ * `--workspace` and a Dependabot `in /path` win. Otherwise the package is
+ * resolved to the one manifest that names it. Naming it in more than one place
+ * without a workspace is a contradiction, not a preference.
+ */
+function resolveDeclaringWorkspace(
+  root: string,
+  packageName: string,
+  requested: string,
+  workspaceRoots: readonly string[],
+  workspaceNames: Readonly<Record<string, string>>,
+  rootManifest: Manifest,
+): string {
+  if (requested !== "") {
+    const selected = resolveWorkspaceSelection(requested, workspaceRoots, invertNames(workspaceNames));
+    const manifest = selected === "" ? rootManifest : readManifest(join(root, selected, "package.json"));
+    if (declaredIn(manifest, packageName) === null) {
+      throw new PackageResolutionError(
+        `${packageName} is not a direct dependency of ${selected === "" ? "the repository root" : selected}`,
+      );
+    }
+    return selected;
+  }
+
+  const atRoot = declaredIn(rootManifest, packageName) !== null;
+  const inWorkspaces = workspaceRoots.filter(
+    (directory) => declaredIn(readManifest(join(root, directory, "package.json")), packageName) !== null,
+  );
+  if (atRoot && inWorkspaces.length === 0) {
+    return "";
+  }
+  if (!atRoot && inWorkspaces.length === 1) {
+    return inWorkspaces[0] ?? "";
+  }
+  if (atRoot && inWorkspaces.length > 0) {
+    throw new PackageResolutionError(
+      `${packageName} is declared at the repository root and in ${inWorkspaces.join(", ")}. Pass --workspace to say which one this run upgrades.`,
+    );
+  }
+  if (inWorkspaces.length > 1) {
+    throw new PackageResolutionError(
+      `${packageName} is declared in more than one workspace (${inWorkspaces.join(", ")}). Pass --workspace to say which one this run upgrades.`,
+    );
+  }
+  throw new PackageResolutionError(`${packageName} is not a direct dependency of this repository`);
+}
+
+function invertNames(pathToName: Readonly<Record<string, string>>): Readonly<Record<string, string>> {
+  const names: Record<string, string> = {};
+  for (const [path, name] of Object.entries(pathToName)) {
+    if (name.length > 0) {
+      names[name] = path;
+    }
+  }
+  return names;
+}
+
+function workspacePackageNames(root: string, workspaceRoots: readonly string[]): Readonly<Record<string, string>> {
+  const names: Record<string, string> = {};
+  for (const directory of workspaceRoots) {
+    try {
+      const raw = JSON.parse(readFileSync(join(root, directory, "package.json"), "utf8")) as {
+        name?: unknown;
+      };
+      names[directory] = typeof raw.name === "string" ? raw.name : "";
+    } catch {
+      names[directory] = "";
+    }
+  }
+  return names;
+}
+
+function declaredIn(manifest: Manifest, packageName: string): string | null {
   const sources: ReadonlyArray<readonly [string, Readonly<Record<string, unknown>>]> = [
     ["dependencies", manifest.dependencies],
     ["devDependencies", manifest.devDependencies],
@@ -306,20 +442,21 @@ function resolveDeclaredVersion(manifest: Manifest, packageName: string): string
   ];
   const found = sources.filter(([, block]) => packageName in block);
   if (found.length === 0) {
-    throw new PackageResolutionError(
-      `${packageName} is not a direct dependency of this repository`,
-    );
+    return null;
   }
   if (found.length > 1) {
     throw new PackageResolutionError(
       `${packageName} is declared in more than one place (${found.map(([name]) => name).join(", ")})`,
     );
   }
-  const [entry] = found;
-  const block = entry?.[1];
-  const declared = block?.[packageName];
-  if (typeof declared !== "string" || declared.length === 0) {
-    throw new PackageResolutionError(`${packageName} has no version specifier`);
+  const declared = found[0]?.[1]?.[packageName];
+  return typeof declared === "string" && declared.length > 0 ? declared : null;
+}
+
+function resolveDeclaredVersion(manifest: Manifest, packageName: string): string {
+  const declared = declaredIn(manifest, packageName);
+  if (declared === null) {
+    throw new PackageResolutionError(`${packageName} is not a direct dependency of this repository`);
   }
   return declared;
 }
@@ -327,10 +464,9 @@ function resolveDeclaredVersion(manifest: Manifest, packageName: string): string
 /**
  * Workspace directories, read from whichever file the manager uses.
  *
- * Globs are not expanded. A workspace glob decides which directories the run may
- * write to, and expanding it here means matching the manager's glob semantics
- * exactly or being quietly wrong. Literal entries are used and globs are
- * reported, so a monorepo is visibly out of scope instead of half handled.
+ * `packages/*` and `packages/**` are expanded onto directories that already
+ * have a `package.json`. Forms this expander does not implement — `?`, braces —
+ * are reported rather than guessed.
  */
 function detectWorkspaces(
   root: string,
@@ -340,22 +476,9 @@ function detectWorkspaces(
 ): readonly string[] {
   const declared =
     manager === "pnpm" ? readPnpmWorkspaces(root, warnings) : readManifestWorkspaces(manifest);
-
-  const literal: string[] = [];
-  for (const entry of declared) {
-    if (entry.includes("*") || entry.includes("?")) {
-      warnings.push(`workspace glob '${entry}' was not expanded, so its packages are out of scope`);
-      continue;
-    }
-    const candidate = join(root, entry);
-    if (!isInside(root, candidate)) {
-      throw new RepositoryError(`workspace '${entry}' resolves outside the repository`);
-    }
-    if (existsSync(join(candidate, "package.json"))) {
-      literal.push(entry);
-    }
-  }
-  return literal;
+  const expanded = expandWorkspacePatterns(root, declared);
+  warnings.push(...expanded.warnings);
+  return expanded.roots;
 }
 
 function readManifestWorkspaces(manifest: Manifest): readonly string[] {
@@ -421,6 +544,7 @@ function planChecks(
   manifest: Manifest,
   manager: PackageManager,
   root: string,
+  workspaceSelector: string,
   timeoutMs: number,
   warnings: string[],
 ): {
@@ -431,6 +555,7 @@ function planChecks(
   const commands: CommandSpec[] = [];
   const scripts: Partial<Record<CheckPurpose, string>> = {};
   const absent: CheckPurpose[] = [];
+  const scoped = workspaceCommandPrefix(manager, workspaceSelector);
 
   for (const purpose of CHECK_PURPOSES) {
     const name = CONVENTIONAL[purpose];
@@ -461,7 +586,7 @@ function planChecks(
     scripts[purpose] = name;
     commands.push({
       executable: manager,
-      args: ["run", name],
+      args: [...scoped, "run", name],
       cwd: root,
       purpose,
       timeoutMs,
@@ -469,6 +594,20 @@ function planChecks(
   }
 
   return { commands, scripts, absent };
+}
+
+function workspaceCommandPrefix(manager: PackageManager, workspaceSelector: string): readonly string[] {
+  if (workspaceSelector.length === 0) {
+    return [];
+  }
+  switch (manager) {
+    case "pnpm":
+      return ["--filter", workspaceSelector.startsWith(".") ? workspaceSelector : `./${workspaceSelector}`];
+    case "npm":
+      return ["--workspace", workspaceSelector];
+    case "yarn":
+      return ["workspace", workspaceSelector];
+  }
 }
 
 function installCommand(manager: PackageManager, root: string, timeoutMs: number): CommandSpec {
@@ -486,9 +625,4 @@ function detectCiFiles(root: string): readonly string[] {
     .filter((name) => name.endsWith(".yml") || name.endsWith(".yaml"))
     .sort()
     .map((name) => join(".github", "workflows", name));
-}
-
-function isInside(root: string, candidate: string): boolean {
-  const rel = relative(root, candidate);
-  return rel.length > 0 && !rel.startsWith("..") && !rel.startsWith(sep);
 }

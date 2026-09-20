@@ -10,6 +10,7 @@
     }
   },
   "dependencies": {
+    "@safe-upgrade/bootstrap": "workspace:*",
     "@safe-upgrade/domain": "workspace:*",
     "@safe-upgrade/evidence": "workspace:*",
     "@safe-upgrade/graph": "workspace:*",

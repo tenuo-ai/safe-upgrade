@@ -16,14 +16,18 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { writeArtifacts } from "./artifacts.ts";
 import { describeProgress, type ProgressReporter } from "./progress.ts";
+import { renderReviewNote } from "./review-note.ts";
 import { join } from "node:path";
 import {
   describeElevation,
   grantFor,
   parseOrThrow,
   PackageResolutionError,
+  currentVersionOf,
   relateVersions,
+  requestedUpdates,
   upgradeRequestSchema,
+  upgradeTargets,
   type CheckPurpose,
   type ElevationGrant,
   type FinalResult,
@@ -38,7 +42,7 @@ import {
   createDevAuthorizationRuntime,
   createProductionAuthorizationRuntime,
 } from "@safe-upgrade/authorization";
-import type { GitHubToolOptions } from "@safe-upgrade/tools";
+import { commentOnPullRequest, type GitHubToolOptions } from "@safe-upgrade/tools";
 import { GraphRecursionError, MemorySaver } from "@langchain/langgraph";
 import {
   buildGraph,
@@ -55,6 +59,8 @@ export interface RunOptions {
   readonly repositoryPath: string;
   readonly packageName: string;
   readonly targetVersion: string;
+  readonly companions?: readonly { readonly packageName: string; readonly targetVersion: string }[];
+  readonly workspace?: string;
   /**
    * Defaults to a fresh UUID. Must be one: the domain schema requires it, and
    * two concurrent runs sharing an id would share a branch name.
@@ -85,15 +91,19 @@ export interface RunOptions {
    */
   readonly onProgress?: ProgressReporter;
   /**
-   * Whether a person has approved publishing this run's branch.
-   *
-   * Separate from `createDraftPullRequest`, which only says a draft is wanted. Wanting
-   * one and agreeing to push are different decisions, and the second is never inferred
-   * from the first: without this, a verified run reports that publishing is the only
-   * thing left and stops.
+   * @deprecated Same as `createDraftPullRequest`. Kept so existing callers that passed
+   * both flags keep working. Asking for a draft is now the decision to open one if
+   * verification passes.
    */
   readonly publishApproved?: boolean;
-  /** Repository and token for the draft pull request. Absent means no publishing. */
+  /**
+   * Leave the classified verdict on this pull request.
+   *
+   * For a Dependabot bump the conversation is already there. Commenting works for
+   * blocked and human_required runs, which never reach the publisher.
+   */
+  readonly commentPullRequest?: number;
+  /** Repository and token for the draft pull request and any review comment. */
   readonly github?: GitHubToolOptions;
   /**
    * An externally issued warrant to run under.
@@ -162,6 +172,8 @@ export interface RunReport {
   /** Approvals this run was given, so the report can tell granted from pending. */
   readonly approvals: readonly ElevationGrant[];
   readonly artifactsDirectory: string | undefined;
+  /** Set when this run commented on an existing pull request. */
+  readonly reviewCommentUrl?: string;
 }
 
 const DEFAULT_ROUTER: RouterConfig = {
@@ -184,21 +196,26 @@ export async function runUpgrade(options: RunOptions): Promise<RunReport> {
       worktreePath: isolation.worktreePath,
       defaultBranch: isolation.defaultBranch,
       packageName: options.packageName,
+      companions: options.companions ?? [],
+      workspace: options.workspace ?? "",
       commandTimeoutMs: 10 * 60_000,
     });
 
-    assertMovesForward(detection.facts.currentVersion, options.targetVersion, options.packageName);
-
-    // Validated here rather than trusted from the caller: the graph validates
-    // again at the first node, but the ceilings below are built from these values.
     const request = parseOrThrow(upgradeRequestSchema, {
       runId,
       repositoryPath: isolation.worktreePath,
       packageName: options.packageName,
       targetVersion: options.targetVersion,
+      companions: options.companions ?? [],
+      workspace: detection.facts.workspace,
       allowTransitive: options.allowTransitive ?? false,
       createDraftPullRequest: options.createDraftPullRequest ?? false,
     }, "upgrade request");
+
+    for (const target of upgradeTargets(request)) {
+      const current = currentVersionOf(detection.facts, target.packageName, request.packageName);
+      assertMovesForward(current, target.targetVersion, target.packageName);
+    }
 
     const artifactsDirectory = options.artifactsDirectory;
     if (artifactsDirectory !== undefined) {
@@ -217,6 +234,8 @@ export async function runUpgrade(options: RunOptions): Promise<RunReport> {
       defaultBranch: isolation.defaultBranch,
       runBranch: isolation.runBranch,
       requestedPackage: options.packageName,
+      requestedUpdates: requestedUpdates(request),
+      workspaceSelector: detection.facts.workspaceSelector,
       manifestPaths: detection.facts.manifests.map((manifest) => join(isolation.worktreePath, manifest)),
       ...(options.github === undefined ? {} : { github: options.github }),
       targetVersion: options.targetVersion,
@@ -274,7 +293,13 @@ export async function runUpgrade(options: RunOptions): Promise<RunReport> {
     const finalState = await runGraph(
       graph,
       invocation,
-      { request, ...(options.publishApproved === true ? { approvalGranted: true } : {}) },
+      {
+        request,
+        // Either flag is the operator saying a verified run should open a draft.
+        ...((options.createDraftPullRequest === true || options.publishApproved === true)
+          ? { approvalGranted: true }
+          : {}),
+      },
       classification,
       options.onProgress,
     );
@@ -283,6 +308,22 @@ export async function runUpgrade(options: RunOptions): Promise<RunReport> {
     if (result === null) {
       throw new Error("the graph finished without classifying a result");
     }
+
+    const reviewCommentUrl = await postReviewComment(options, {
+      runId,
+      request,
+      result,
+      facts: detection.facts,
+      startCommit: isolation.startCommit,
+      runBranch: isolation.runBranch,
+      sourceClean: isolation.sourceClean,
+      detectionWarnings: detection.warnings,
+      absentChecks: detection.absentChecks,
+      finalState,
+      events: audit.events,
+      approvals: options.approvals ?? [],
+      artifactsDirectory,
+    }, audit);
 
     const report: RunReport = {
       runId,
@@ -298,6 +339,7 @@ export async function runUpgrade(options: RunOptions): Promise<RunReport> {
       events: audit.events,
       approvals: options.approvals ?? [],
       artifactsDirectory,
+      ...(reviewCommentUrl === undefined ? {} : { reviewCommentUrl }),
     };
 
     if (artifactsDirectory !== undefined) {
@@ -379,6 +421,35 @@ async function runGraph(
       }),
     };
   }
+}
+
+/**
+ * Comment on an existing pull request after the run has a result.
+ *
+ * Not a graph node. Blocked and human_required never reach the publisher, and those
+ * are the Dependabot cases a reviewer most needs to see. A refusal here is a
+ * ToolExecutionError and fails the run: a comment that was asked for and not posted
+ * would look like a silent success.
+ */
+async function postReviewComment(
+  options: RunOptions,
+  report: RunReport,
+  audit: AuditLog,
+): Promise<string | undefined> {
+  if (options.commentPullRequest === undefined || options.github === undefined) {
+    return undefined;
+  }
+  const posted = await commentOnPullRequest(
+    options.github,
+    options.commentPullRequest,
+    renderReviewNote(report),
+  );
+  audit.record({
+    phase: "finalize",
+    type: "review_comment_posted",
+    payload: { pullRequest: options.commentPullRequest, url: posted.url },
+  });
+  return posted.url;
 }
 
 /** Install always counts. Beyond that, only checks the repository actually has. */
@@ -491,8 +562,8 @@ export function renderReport(report: RunReport): string {
         ? `- The change was made on \`${report.runBranch}\` in a worktree that has since been removed, and no artifact directory was given to keep it in.`
         : `- The change was made on \`${report.runBranch}\`. The worktree is gone; the diff is in \`${join(report.artifactsDirectory, "patch.diff")}\`.`,
       report.request.createDraftPullRequest
-        ? "- Publishing was requested. Re-run with `publishApproved` to commit, push, and open a draft."
-        : "- Publishing was not requested, so nothing was pushed and no pull request exists.",
+        ? "- A draft was requested but not opened, so verification did not pass or GitHub refused the push. The diff is the record of what this run did."
+        : "- A draft was not requested, so nothing was pushed and no pull request exists.",
       "",
     );
   }

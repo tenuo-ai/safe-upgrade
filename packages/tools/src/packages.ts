@@ -96,7 +96,7 @@ function workspaceArgs(manager: PackageManager, workspace: string): string[] {
   assertNoShellSyntax(workspace, "workspace");
   switch (manager) {
     case "pnpm":
-      return ["--filter", workspace];
+      return ["--filter", workspace.startsWith(".") || workspace.startsWith("@") ? workspace : `./${workspace}`];
     case "npm":
       return ["--workspace", workspace];
     case "yarn":
@@ -214,21 +214,25 @@ export function createPackageTools(context: ToolContext): {
         // Tenuo pins these to the requested package and version, but the tool
         // re-checks: a ceiling that is only enforced in one place is a ceiling
         // that breaks silently when the policy is edited.
-        if (args.packageName !== context.requestedPackage) {
+        const expected = context.requestedUpdates[args.packageName];
+        if (expected === undefined) {
           throw new ToolExecutionError(
-            `this run may only update ${context.requestedPackage}, not ${args.packageName}`,
+            `this run may only update ${Object.keys(context.requestedUpdates).join(", ")}, not ${args.packageName}`,
           );
         }
-        if (args.targetVersion !== context.targetVersion) {
+        if (args.targetVersion !== expected) {
           throw new ToolExecutionError(
-            `this run may only install version ${context.targetVersion}, not ${args.targetVersion}`,
+            `this run may only install ${args.packageName}@${expected}, not ${args.targetVersion}`,
           );
         }
         assertNoShellSyntax(args.packageName, "package name");
         assertNoShellSyntax(args.targetVersion, "target version");
         const command: CommandSpec = {
           executable: manager,
-          args: updateArgs(manager, `${args.packageName}@${args.targetVersion}`),
+          args: [
+            ...workspaceArgs(manager, context.workspaceSelector),
+            ...updateArgs(manager, `${args.packageName}@${args.targetVersion}`),
+          ],
           cwd,
           purpose: "install",
           timeoutMs: context.limits.commandTimeoutMs,

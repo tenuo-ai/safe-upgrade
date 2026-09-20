@@ -72,6 +72,8 @@ export interface RegistryMetadata {
   readonly homepage: string | null;
   readonly publishedAt: string | null;
   readonly shape: PublishedShape;
+  /** Peer ranges the published version declares. Empty when it declares none. */
+  readonly peerDependencies: Readonly<Record<string, string>>;
   readonly contentHash: string;
   readonly retrievedAt: string;
 }
@@ -228,6 +230,20 @@ export function normalizeDocument(text: string, mediaType: string): string {
 /** Bound a remote string before it can reach state, a prompt, or a checkpoint. */
 function boundedString(value: unknown, limit: number): string | null {
   return typeof value === "string" && value.length > 0 ? value.slice(0, limit) : null;
+}
+
+function peerDependenciesOf(manifest: Record<string, unknown>): Readonly<Record<string, string>> {
+  const raw = manifest.peerDependencies;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return {};
+  }
+  const peers: Record<string, string> = {};
+  for (const [name, range] of Object.entries(raw)) {
+    if (typeof range === "string" && range.length > 0 && range.length < 128 && name.length < 214) {
+      peers[name] = range;
+    }
+  }
+  return peers;
 }
 
 /**
@@ -392,6 +408,7 @@ export function createReleaseTools(
           homepage: typeof parsed.homepage === "string" ? parsed.homepage : null,
           publishedAt: null,
           shape: publishedShape(parsed),
+          peerDependencies: peerDependenciesOf(parsed),
           contentHash: document.contentHash,
           retrievedAt: document.retrievedAt,
         };

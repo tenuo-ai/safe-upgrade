@@ -161,12 +161,12 @@ const RULES: readonly Rule[] = [
       if (state.draftPullRequestUrl !== null) {
         return null;
       }
-      if (!state.approvalGranted) {
-        // Not eligible, but not silently dropped either: the run records that a
-        // human decision is the only thing standing in the way.
-        return null;
-      }
-      return "verification passed and publishing is explicitly approved";
+      // Asking for a draft at the start of the run is the operator decision. A second
+      // approval after `verified` made sense when a person was at a laptop and might not
+      // want a remote branch. When the draft is the product — a Dependabot bump, a
+      // scheduled upgrade — that gate stopped every clean lockfile change, which is most
+      // of them. Elevation still stops the run; merging still takes a person.
+      return "verification passed and a draft was requested";
     },
   },
   {
@@ -254,14 +254,9 @@ export function pendingApprovalsFor(
   grants: readonly ElevationGrant[] = [],
 ): readonly string[] {
   const pending: string[] = [];
-  if (
-    state.request.createDraftPullRequest &&
-    state.lastVerification === "passed" &&
-    state.draftPullRequestUrl === null &&
-    !state.approvalGranted
-  ) {
-    pending.push("draft pull request creation");
-  }
+  // A requested draft is no longer a pending approval. The operator asked for it
+  // before the run; if verification passed, the publisher is eligible. What still
+  // waits here is elevation: a capability no worker holds.
   for (const request of state.elevationRequests) {
     if (grantFor(request, grants) !== null) {
       continue;

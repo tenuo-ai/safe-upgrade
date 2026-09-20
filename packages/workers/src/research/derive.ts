@@ -17,6 +17,7 @@ import { count } from "@safe-upgrade/domain";
 import type { MigrationFinding } from "@safe-upgrade/domain";
 import type { PublishedShape } from "@safe-upgrade/tools";
 import type { MemberReference } from "./members.ts";
+import { isTestFile } from "./usages.ts";
 import type { Usage } from "./usages.ts";
 
 export interface DerivationInput {
@@ -49,6 +50,21 @@ export interface DerivationInput {
    * asks the engine and calls this again with the answer.
    */
   readonly proseAssessment?: ProseAssessment;
+  /**
+   * Renames the release note and the new surface agree on.
+   *
+   * `from` is a removed export this repository uses; `to` is a name the target
+   * added. Anything else is left as a removal.
+   */
+  readonly renamePairs?: readonly { readonly from: string; readonly to: string }[];
+  /**
+   * Peer dependencies the target declares that this run did not name.
+   *
+   * Named companions are omitted by the caller. What remains needs a person,
+   * because satisfying a range is not the same as moving a package this run
+   * was authorized to touch.
+   */
+  readonly peerRequirements?: readonly { readonly packageName: string; readonly range: string }[];
 }
 
 export interface ProseAssessment {
@@ -163,8 +179,24 @@ export function deriveFindings(input: DerivationInput): Derivation {
 
   // An export this repository uses that the target does not have. Structural and
   // certain: the name was present in one installed version and absent in the other.
+  const renameTo = uniquePairs(input.renamePairs ?? []);
   const byMember = groupByMember(input.removedMembers);
   for (const [member, references] of byMember) {
+    const replacement = renameTo.get(member);
+    if (replacement !== undefined) {
+      findings.push({
+        id: `export-renamed-at-target:${input.packageName}:${member}`,
+        releaseClaim: `${input.packageName} ${input.currentVersion} exports ${member}, and ${input.targetVersion} exports ${replacement} in its place. The release note and the new surface agree on that rename. This repository reaches ${member} in ${count(references.length, "place")}.`,
+        evidenceIds: cite,
+        affectedSymbols: [`${input.packageName}.${member}`],
+        affectedFiles: unique(references.map((reference) => reference.file)),
+        requiredChange: `Rename every use of ${input.packageName}.${member} to ${replacement}.`,
+        confidence: 1,
+        spansTestFiles: references.some((reference) => isTestFile(reference.file)),
+        replacement: { packageName: input.packageName, from: member, to: replacement },
+      });
+      continue;
+    }
     findings.push({
       id: `export-removed-at-target:${member}`,
       releaseClaim: `${input.packageName} ${input.currentVersion} exports ${member}, and ${input.targetVersion} does not. This repository reaches it in ${count(references.length, "place")}.`,
@@ -175,6 +207,19 @@ export function deriveFindings(input: DerivationInput): Derivation {
       // name that took over, if any, is not derivable from a set difference, and
       // guessing it would put an invented API into source that has to compile.
       requiredChange: `Replace every use of ${input.packageName}.${member}. ${describeCandidates(input.addedNames)}`,
+      confidence: 1,
+      needsHuman: true,
+    });
+  }
+
+  for (const peer of input.peerRequirements ?? []) {
+    findings.push({
+      id: `peer-required:${peer.packageName}`,
+      releaseClaim: `${input.packageName} ${input.targetVersion} declares a peer dependency on ${peer.packageName} (${peer.range}), which is not named on this run.`,
+      evidenceIds: input.shapeEvidenceIds,
+      affectedSymbols: [peer.packageName],
+      affectedFiles: [],
+      requiredChange: `Name ${peer.packageName} as a --companion if this run should move it, or confirm the installed version satisfies ${peer.range}.`,
       confidence: 1,
       needsHuman: true,
     });
@@ -304,6 +349,61 @@ function isMajorBump(current: string, target: string): boolean {
  * Quoting only. Nothing downstream branches on this text, and it is bounded so a
  * large document cannot become a large prompt or a large checkpoint.
  */
+/**
+ * Renames a release note states, kept only when the old name was removed and
+ * the new name was added.
+ *
+ * The note is still not an instruction. It is used as a filter over two sets
+ * this run already observed: names that disappeared and names that arrived.
+ * A sentence that names anything else is ignored.
+ */
+export function renamePairsFromNote(
+  text: string,
+  removed: readonly string[],
+  added: readonly string[],
+): readonly { readonly from: string; readonly to: string }[] {
+  const gone = new Set(removed);
+  const arrived = new Set(added);
+  const candidates: { readonly from: string; readonly to: string }[] = [];
+  const patterns = [
+    /\b([A-Za-z_$][\w$]*)\s*(?:→|->|=>)\s*([A-Za-z_$][\w$]*)\b/g,
+    /\brename[sd]?\s+`?([A-Za-z_$][\w$]*)`?\s+to\s+`?([A-Za-z_$][\w$]*)`?/gi,
+    /\b([A-Za-z_$][\w$]*)\s+is now\s+`?([A-Za-z_$][\w$]*)`?/gi,
+    /\breplace[sd]?\s+`?([A-Za-z_$][\w$]*)`?\s+with\s+`?([A-Za-z_$][\w$]*)`?/gi,
+  ];
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      const from = match[1] ?? "";
+      const to = match[2] ?? "";
+      if (gone.has(from) && arrived.has(to) && from !== to) {
+        candidates.push({ from, to });
+      }
+    }
+  }
+  return [...uniquePairs(candidates)].map(([from, to]) => ({ from, to }));
+}
+
+function uniquePairs(
+  pairs: readonly { readonly from: string; readonly to: string }[],
+): ReadonlyMap<string, string> {
+  const tos = new Map<string, Set<string>>();
+  for (const pair of pairs) {
+    const existing = tos.get(pair.from) ?? new Set<string>();
+    existing.add(pair.to);
+    tos.set(pair.from, existing);
+  }
+  const unique = new Map<string, string>();
+  for (const [from, names] of tos) {
+    if (names.size === 1) {
+      const to = [...names][0];
+      if (to !== undefined) {
+        unique.set(from, to);
+      }
+    }
+  }
+  return unique;
+}
+
 export function relevantExtract(text: string, targetVersion: string, limit = 2000): string {
   const needle = text.indexOf(targetVersion);
   if (needle === -1) {

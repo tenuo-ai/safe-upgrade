@@ -155,6 +155,8 @@ export function createGraphHarness(options: GraphHarnessOptions = {}): GraphHarn
         repositoryPath: base.root,
         packageName: "left-pad",
         targetVersion: "1.3.0",
+        companions: [],
+        workspace: "",
         allowTransitive: false,
         createDraftPullRequest: false,
         ...request,

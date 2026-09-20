@@ -161,6 +161,9 @@ importers:
       '@safe-upgrade/jev':
         specifier: workspace:*
         version: link:../jev
+      '@safe-upgrade/tools':
+        specifier: workspace:*
+        version: link:../tools
       '@safe-upgrade/workers':
         specifier: workspace:*
         version: link:../workers
@@ -179,6 +182,9 @@ importers:
 
   packages/workers:
     dependencies:
+      '@safe-upgrade/bootstrap':
+        specifier: workspace:*
+        version: link:../bootstrap
       '@safe-upgrade/domain':
         specifier: workspace:*
         version: link:../domain

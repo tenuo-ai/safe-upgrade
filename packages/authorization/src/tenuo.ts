@@ -38,6 +38,8 @@ export interface RuntimeOptions {
   /** Manifests this run may edit structurally, as absolute paths. */
   readonly manifestPaths?: readonly string[];
   readonly targetVersion: string;
+  readonly requestedUpdates?: Readonly<Record<string, string>>;
+  readonly workspaceSelector?: string;
   readonly audit: AuditLog;
   readonly limits?: ToolLimits;
   readonly github?: GitHubToolOptions;
@@ -102,10 +104,20 @@ function contexts(options: RuntimeOptions): {
 } {
   const limits = options.limits ?? DEFAULT_LIMITS;
   const paths = createPathContext(options.worktreeRoot);
+  const requestedUpdates = options.requestedUpdates ?? {
+    [options.requestedPackage]: options.targetVersion,
+  };
+  const requestedPackages = Object.keys(requestedUpdates);
+  const requestedVersions = [...new Set(Object.values(requestedUpdates))];
+  const workspaceSelector = options.workspaceSelector ?? "";
   const ceilingContext: CeilingContext = {
     worktreeRoot: paths.realRoot,
     requestedPackage: options.requestedPackage,
     targetVersion: options.targetVersion,
+    requestedPackages,
+    requestedVersions,
+    requestedUpdates,
+    workspaceSelector,
     runBranch: options.runBranch,
     releaseHosts: options.releaseHosts ?? RELEASE_HOST_ALLOWLIST,
     maxCommandTimeoutMs: limits.commandTimeoutMs,
@@ -121,6 +133,8 @@ function contexts(options: RuntimeOptions): {
     defaultBranch: options.defaultBranch,
     requestedPackage: options.requestedPackage,
     targetVersion: options.targetVersion,
+    requestedUpdates,
+    workspaceSelector,
     limits,
     ...(options.onInvoke === undefined ? {} : { onInvoke: options.onInvoke }),
   };

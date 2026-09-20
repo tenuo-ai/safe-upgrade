@@ -97,6 +97,8 @@ export const UNSET_REQUEST: UpgradeRequest = Object.freeze({
   repositoryPath: "",
   packageName: "",
   targetVersion: "",
+  companions: [],
+  workspace: "",
   allowTransitive: false,
   createDraftPullRequest: false,
 });

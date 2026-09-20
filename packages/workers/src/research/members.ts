@@ -197,3 +197,76 @@ function blankStringBodies(source: string): string {
 function escapeForRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\/]/g, String.raw`\$&`);
 }
+
+/**
+ * Rename one exported member in a file that loads `packageName`.
+ *
+ * Member access (`pkg.from`) and a same-name binding (`import { from }`) both
+ * move. An aliased import (`import { from as local }`) only changes the
+ * exported name; uses of `local` stay.
+ */
+export function renameExportedMember(
+  source: string,
+  packageName: string,
+  from: string,
+  to: string,
+): string {
+  const bindings = readBindings(withoutComments(source), packageName);
+  if (bindings.whole.length === 0 && bindings.named.size === 0) {
+    return source;
+  }
+
+  const declarationLines = withoutComments(source)
+    .split("\n")
+    .map((line) => bindsPackage(line, packageName));
+
+  return source
+    .split("\n")
+    .map((line, index) => {
+      let next = line;
+      if (declarationLines[index] === true) {
+        next = renameInBindingClause(next, packageName, from, to);
+      }
+      for (const whole of bindings.whole) {
+        next = next.replace(
+          new RegExp(String.raw`\b${escapeForRegExp(whole)}\s*\.\s*${escapeForRegExp(from)}\b`, "g"),
+          `${whole}.${to}`,
+        );
+      }
+      for (const [local, exported] of bindings.named) {
+        if (exported !== from || local !== from || declarationLines[index] === true) {
+          continue;
+        }
+        next = next.replace(new RegExp(String.raw`\b${escapeForRegExp(local)}\b`, "g"), to);
+      }
+      return next;
+    })
+    .join("\n");
+}
+
+function renameInBindingClause(line: string, packageName: string, from: string, to: string): string {
+  const specifier = escapeForRegExp(packageName);
+  return line.replace(
+    new RegExp(
+      String.raw`\{([^}]*)\}(\s*=\s*require\(\s*['"]${specifier}['"]|\s+from\s*['"]${specifier}['"])`,
+    ),
+    (_match, inner: string, tail: string) => `{${renameExportInList(inner, from, to)}}${tail}`,
+  );
+}
+
+function renameExportInList(inner: string, from: string, to: string): string {
+  return inner
+    .split(",")
+    .map((entry) => {
+      const renamed = /^\s*([A-Za-z_$][\w$]*)\s*((?::|\bas\b)\s*[A-Za-z_$][\w$]*)\s*$/.exec(entry);
+      if (renamed?.[1] === from) {
+        return entry.replace(from, to);
+      }
+      const direct = /^\s*([A-Za-z_$][\w$]*)\s*$/.exec(entry);
+      if (direct?.[1] === from) {
+        return entry.replace(from, to);
+      }
+      return entry;
+    })
+    .join(",");
+}

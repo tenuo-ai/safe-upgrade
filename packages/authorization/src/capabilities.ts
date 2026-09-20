@@ -94,10 +94,18 @@ export type Ceilings = { readonly [C in Capability]: Ceiling<CapabilityArgs[C]> 
 export interface CeilingContext {
   /** Canonical, symlink-resolved worktree root. */
   readonly worktreeRoot: string;
-  /** The one package this run may upgrade. */
+  /** The primary package this run may upgrade. */
   readonly requestedPackage: string;
-  /** The one version this run may install. */
+  /** The primary version this run may install. */
   readonly targetVersion: string;
+  /** Every package this run named, primary first. */
+  readonly requestedPackages: readonly string[];
+  /** Every exact version this run named. */
+  readonly requestedVersions: readonly string[];
+  /** Name to version pairs this run may install. The tool re-checks the pair. */
+  readonly requestedUpdates: Readonly<Record<string, string>>;
+  /** Workspace selector passed to `run_check`. Empty at the repository root. */
+  readonly workspaceSelector: string;
   /** The one branch this run may create and push. */
   readonly runBranch: string;
   readonly releaseHosts: readonly string[];
@@ -124,6 +132,16 @@ const anyText = () => wildcard();
 const ALL_CHECK_KINDS = ["test", "typecheck", "lint", "build"] as const;
 
 const SEMVER = String.raw`^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$`;
+
+/** `exact` when there is one value, `oneOf` when there are several. */
+function pin(values: readonly string[]): ConstraintExpr {
+  const unique = [...new Set(values)];
+  const first = unique[0];
+  if (unique.length <= 1 || first === undefined) {
+    return exact(first ?? "");
+  }
+  return oneOf(unique);
+}
 
 /**
  * The widest allowed form of every capability. A run's parent session is minted
@@ -180,19 +198,20 @@ export function capabilityCeilings(context: CeilingContext): Ceilings {
       lifecycleScripts: oneOf(["disabled", "enabled"]),
     },
     update_dependency: {
-      // Pinned to the request. A second package cannot be upgraded in this run
-      // even if a worker asks for it in good faith.
-      packageName: exact(context.requestedPackage),
-      targetVersion: exact(context.targetVersion),
+      // Named packages and versions only. The pair (this name at that version)
+      // is checked in the tool body, because `oneOf` on each field separately
+      // would allow mixing a companion's name with the primary's version.
+      packageName: pin(context.requestedPackages),
+      targetVersion: pin(context.requestedVersions),
     },
     run_check: {
       kind: oneOf([...ALL_CHECK_KINDS]),
       script: anyText(),
-      workspace: anyText(),
+      workspace: exact(context.workspaceSelector),
     },
 
     read_registry_metadata: {
-      packageName: exact(context.requestedPackage),
+      packageName: pin(context.requestedPackages),
       // A version, not a path segment smuggled into the registry URL. A glob
       // cannot express this: `*` matches `/`, so `pattern("*.*.*")` accepts
       // `../../../etc/passwd`.
@@ -201,12 +220,12 @@ export function capabilityCeilings(context: CeilingContext): Ceilings {
     /**
      * Reading a published version's exports, which means loading it.
      *
-     * Bounded to the one package this run may upgrade, and to a version, not a path
+     * Bounded to the packages this run named, and to a version, not a path
      * segment: the version reaches an installer argument, and `pattern` would not do —
      * `*` matches `/`, so a glob here would accept `../../../etc/passwd`.
      */
     read_package_exports: {
-      packageName: exact(context.requestedPackage),
+      packageName: pin(context.requestedPackages),
       version: regex(SEMVER),
     },
     // The only network capability, so the host allowlist and the SSRF blocking

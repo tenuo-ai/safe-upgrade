@@ -17,11 +17,22 @@ Options
   --approve <id>              Approve one call a previous run asked about, by id.
                               Repeatable. Needs --approved-by.
   --approved-by <who>         Who approved it. Recorded in the audit log.
-  --draft-pr                  Want a draft pull request. Does not authorise pushing.
-  --publish                   Approve pushing the run branch and opening the draft.
-                              Needs --github-repository.
+  --draft-pr                  If verification passes, push the run branch and open
+                              a draft pull request. Needs --github-repository or
+                              GITHUB_REPOSITORY. Does not merge.
+  --publish                   Same as --draft-pr. Kept so existing scripts work.
+  --comment-pr <n>            Leave this run's verdict on an existing pull request.
+                              For blocked and human_required as well as verified.
+  --from-event                Read package, version, workspace, companions, and
+                              pull number from a Dependabot pull_request event
+                              (GITHUB_EVENT_PATH). Comments on that pull request.
+  --companion <name@ver>      A further exact package this run may move. Repeatable.
+  --workspace <path>          Workspace to upgrade in (packages/app). Also read
+                              from a Dependabot title's "in /path".
   --github-repository <o/n>   Where the draft goes. Needs GITHUB_TOKEN in the environment.
-  --allow-transitive          Permit a transitive dependency to move as a consequence.
+  --allow-transitive          Permit other lockfile versions to move as a
+                              consequence of this upgrade. Without it, an extra
+                              move stops the run.
   --partial-allowed           Exit 0 on a partial result instead of 2.
   --format markdown|json      What to print. Default: markdown.
   --quiet                     Do not print per-step progress. Progress goes to
@@ -57,6 +68,8 @@ Exit codes
 
 Examples
   safe-upgrade postcss@8.4.35 --repository ~/src/app
+  safe-upgrade postcss@8.4.35 --workspace packages/app --companion nanoid@5.0.0
   safe-upgrade escape-string-regexp@5.0.0 --approve 4f3c2b1a --approved-by alice
-  safe-upgrade left-pad@1.3.0 --publish --github-repository acme/app
+  safe-upgrade left-pad@1.3.0 --draft-pr --github-repository acme/app
+  safe-upgrade --from-event
 `;

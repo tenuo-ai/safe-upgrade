@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { findMemberReferences, readBindings } from "@safe-upgrade/workers";
+import { findMemberReferences, readBindings, renameExportedMember } from "@safe-upgrade/workers";
 
 const removed = ["vendor", "list"];
 
@@ -111,5 +111,23 @@ describe("reading the bindings themselves", () => {
     const bindings = readBindings('const selector = require("postcss-selector-parser");', "postcss");
     expect(bindings.whole).toEqual([]);
     expect(bindings.named.size).toBe(0);
+  });
+});
+
+describe("renaming an exported member", () => {
+  it("rewrites a member access and a named import", () => {
+    const source = ['import { vendor } from "postcss";', 'const postcss = require("postcss");', "postcss.vendor.prefix(vendor);"].join(
+      "\n",
+    );
+    expect(renameExportedMember(source, "postcss", "vendor", "util")).toBe(
+      ['import { util } from "postcss";', 'const postcss = require("postcss");', "postcss.util.prefix(util);"].join("\n"),
+    );
+  });
+
+  it("keeps an alias and only changes the exported name", () => {
+    const source = 'import { vendor as v } from "postcss";\nv.prefix(x);';
+    expect(renameExportedMember(source, "postcss", "vendor", "util")).toBe(
+      'import { util as v } from "postcss";\nv.prefix(x);',
+    );
   });
 });

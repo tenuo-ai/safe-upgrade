@@ -28,7 +28,7 @@ export type { Conversion, ConversionResult, Refusal } from "./migrate/to-esm.ts"
 export { createTestAuthor, exportedNames, loadTest, testPathFor } from "./test-author.ts";
 export { createVerifier, diffPolicyViolations } from "./verifier.ts";
 export { createResearcher, githubRepository } from "./research/researcher.ts";
-export { deriveFindings, relevantExtract } from "./research/derive.ts";
+export { deriveFindings, relevantExtract, renamePairsFromNote } from "./research/derive.ts";
 export type { Derivation, DerivationInput } from "./research/derive.ts";
 export { findUsages, isSourceFile, isTestFile } from "./research/usages.ts";
 export type { LoadStyle, Usage } from "./research/usages.ts";
@@ -50,7 +50,7 @@ export function createWorkerRegistry(context: RunContext): WorkerRegistry {
     publisher: createPublisher(context),
   };
 }
-export { findMemberReferences, readBindings } from "./research/members.ts";
+export { findMemberReferences, readBindings, renameExportedMember } from "./research/members.ts";
 export type { MemberReference } from "./research/members.ts";
 export { describeRisks, inspectWorkflow } from "./workflow/inspect.ts";
 export type { InspectOptions, WorkflowRisk, WorkflowRiskKind } from "./workflow/inspect.ts";

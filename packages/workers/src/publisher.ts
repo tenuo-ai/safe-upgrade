@@ -102,7 +102,11 @@ function commitMessage(context: RunContext, findings: readonly MigrationFinding[
 function pullRequestBody(context: RunContext, input: WorkerInput): string {
   const { state } = input;
   const sections: string[] = [
-    `Upgrades \`${context.request.packageName}\` from \`${context.facts.currentVersion}\` to \`${context.request.targetVersion}\`.`,
+    `Upgrades \`${context.request.packageName}\` from \`${context.facts.currentVersion}\` to \`${context.request.targetVersion}\`${
+      context.request.companions.length === 0
+        ? ""
+        : `, plus ${context.request.companions.map((companion) => `\`${companion.packageName}\` to \`${companion.targetVersion}\``).join(", ")}`
+    }.`,
     "",
     "This branch was produced by an automated run. Nothing here has been reviewed by a person yet.",
   ];

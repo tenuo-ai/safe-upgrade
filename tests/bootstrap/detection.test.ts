@@ -188,14 +188,30 @@ describe("workspaces", () => {
     expect(() => detect()).toThrow(/outside the repository/);
   });
 
-  it("reports a glob rather than expanding it", () => {
+  it("expands a packages/* glob onto directories that have a manifest", () => {
     repo = createFixtureRepo();
+    mkdirSync(join(repo.path, "packages", "app"), { recursive: true });
+    writeFileSync(join(repo.path, "packages", "app", "package.json"), `${JSON.stringify({ name: "app" }, null, 2)}\n`);
     patchManifest({ workspaces: ["packages/*"] });
+
     const { facts, warnings } = detect();
-    // Expanding here means matching npm's glob semantics exactly or being quietly
-    // wrong about which directories the run may write to.
-    expect(facts.workspaceRoots).toEqual([]);
-    expect(warnings.join(" ")).toMatch(/was not expanded/);
+    expect(facts.workspaceRoots).toEqual(["packages/app"]);
+    expect(warnings.join(" ")).not.toMatch(/was not expanded/);
+  });
+
+  it("resolves a package that is only declared in a workspace", () => {
+    repo = createFixtureRepo();
+    mkdirSync(join(repo.path, "packages", "app"), { recursive: true });
+    writeFileSync(
+      join(repo.path, "packages", "app", "package.json"),
+      `${JSON.stringify({ name: "app", dependencies: { "left-pad": "1.3.0" } }, null, 2)}\n`,
+    );
+    patchManifest({ workspaces: ["packages/*"] });
+
+    const { facts } = detect("left-pad");
+    expect(facts.workspace).toBe("packages/app");
+    expect(facts.workspaceSelector).toBe("packages/app");
+    expect(facts.currentVersion).toBe("1.3.0");
   });
 
   it("picks up a literal workspace directory that has a manifest", () => {

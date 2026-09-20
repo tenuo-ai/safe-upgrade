@@ -54,10 +54,21 @@ than editing `ci.yml`, because a step accidentally dropped from an existing work
 removes a gate while leaving the tick.
 
 With that, the approved run reaches `verified` and states the five conditions that
-earned it. Publishing is a further decision: the run commits to its own branch,
-pushes it, and opens a draft pull request only when a person has approved that
-separately. It cannot merge, cannot mark a draft ready, and cannot push any branch
-but its own.
+earned it. `--draft-pr` then commits the run branch, pushes it, and opens a draft
+pull request. It cannot merge, cannot mark a draft ready, and cannot push any
+branch but its own. Elevation — a capability no worker holds — still stops the run
+and asks a person; a clean lockfile bump does not.
+
+A Dependabot pull request is assessed in place. `--from-event` reads a bump from the
+Actions event — including a workspace path (`in /packages/app`) and grouped
+`Updates \`pkg\` from x to y` lines — and comments the verdict on that pull request,
+including when the run is `blocked` or `human_required`. See
+`examples/dependabot-assess.yml`.
+
+A monorepo is in scope. `packages/*` is expanded onto directories that already have
+a `package.json`. `--workspace` and `--companion name@version` name where and what
+else this run may move. `--allow-transitive` is now a real gate: without it, an extra
+lockfile version change stops the run rather than shipping as a side effect.
 
 A second fixture, `fixtures/prefix-tool`, covers the harder shape: a break that no
 manifest announces. It is pinned to `postcss` 7 and upgraded to 8, and both versions
@@ -66,10 +77,11 @@ publish as CommonJS with the same entry point — the difference is that
 versions and comparing what they export, then finds which of the repository's files
 reach the missing name and which do not.
 
-It then refuses to fix it. What replaced a removed export is not a structural
-question, and a set difference cannot tell a rename from a removal, so the run ends
-`blocked` naming the symbol, the file, and the names the target added as somewhere to
-look. That is the point of the fixture: its test suite *passes* at the target
+It then refuses to fix it unless the release note and the new surface agree on a
+rename — old name gone, new name present, note saying one became the other. A set
+difference alone cannot tell a rename from a removal, so `postcss.vendor` stays
+`blocked`, naming the symbol, the file, and the names the target added as somewhere
+to look. That is the point of the fixture: its test suite *passes* at the target
 version, because the only covered call site is one that survives, so a run that
 trusted a green suite would have reported success on code that does not build.
 

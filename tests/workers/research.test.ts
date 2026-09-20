@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 import { publishedShape, type PublishedShape } from "@safe-upgrade/tools";
-import { deriveFindings, findUsages, isTestFile, relevantExtract } from "@safe-upgrade/workers";
+import { deriveFindings, findUsages, isTestFile, relevantExtract, renamePairsFromNote } from "@safe-upgrade/workers";
 import type { Usage } from "@safe-upgrade/workers";
 
 const CJS: PublishedShape = {
@@ -222,6 +222,64 @@ describe("reading the published shape", () => {
       nested = { nested };
     }
     expect(() => publishedShape({ exports: nested })).not.toThrow();
+  });
+});
+
+describe("a rename the note and the new surface agree on", () => {
+  const removed = {
+    file: "src/a.js",
+    member: "vendor",
+    line: 3,
+    excerpt: "postcss.vendor.prefix(x)",
+  };
+
+  it("emits a rename finding rather than a human-required removal", () => {
+    const { findings } = derive({
+      packageName: "postcss",
+      currentVersion: "7.0.39",
+      targetVersion: "8.4.35",
+      currentShape: CJS,
+      targetShape: CJS,
+      usages: [{ file: "src/a.js", style: "require", line: 1, excerpt: "" }],
+      removedMembers: [removed],
+      addedNames: ["util"],
+      renamePairs: [{ from: "vendor", to: "util" }],
+    });
+    const finding = findings.find((entry) => entry.id.startsWith("export-renamed-at-target:"));
+    expect(finding?.needsHuman).toBeUndefined();
+    expect(finding?.replacement).toEqual({ packageName: "postcss", from: "vendor", to: "util" });
+    expect(findings.map((entry) => entry.id)).not.toContain("export-removed-at-target:vendor");
+  });
+
+  it("still needs a person when the note does not name the pair", () => {
+    const { findings } = derive({
+      packageName: "postcss",
+      currentVersion: "7.0.39",
+      targetVersion: "8.4.35",
+      currentShape: CJS,
+      targetShape: CJS,
+      usages: [{ file: "src/a.js", style: "require", line: 1, excerpt: "" }],
+      removedMembers: [removed],
+      addedNames: ["util"],
+    });
+    expect(findings.find((entry) => entry.id === "export-removed-at-target:vendor")?.needsHuman).toBe(true);
+  });
+
+  it("only keeps note pairs that sit in both surfaces", () => {
+    expect(renamePairsFromNote("vendor → util\nlist -> missing", ["vendor", "list"], ["util"])).toEqual([
+      { from: "vendor", to: "util" },
+    ]);
+  });
+});
+
+describe("peer dependencies this run did not name", () => {
+  it("needs a person rather than moving the peer", () => {
+    const { findings } = derive({
+      peerRequirements: [{ packageName: "react", range: "^18.0.0" }],
+    });
+    const peer = findings.find((entry) => entry.id === "peer-required:react");
+    expect(peer?.needsHuman).toBe(true);
+    expect(peer?.releaseClaim).toMatch(/react/);
   });
 });
 

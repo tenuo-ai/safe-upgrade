@@ -19,10 +19,22 @@
  * least likely to catch.
  */
 
-import { elevationRequest, type ElevationRequest, type FileChange, type MigrationFinding } from "@safe-upgrade/domain";
+import { join } from "node:path";
+import {
+  lockfilePackageVersions,
+  unexpectedLockfileMoves,
+} from "@safe-upgrade/bootstrap";
+import {
+  elevationRequest,
+  upgradeTargets,
+  type ElevationRequest,
+  type FileChange,
+  type MigrationFinding,
+} from "@safe-upgrade/domain";
 import type { UpgradeStateUpdate, WorkerFn, WorkerInput } from "@safe-upgrade/graph";
 import { inWorktree, type RunContext } from "./context.ts";
 import { convertToEsm, type Refusal } from "./migrate/to-esm.ts";
+import { renameExportedMember } from "./research/members.ts";
 import { isSourceFile, isTestFile } from "./research/usages.ts";
 
 /** Files converted in one pass. Bounded so a large repository cannot stall the run. */
@@ -104,32 +116,131 @@ async function moveDependencyOnly(
   input: WorkerInput,
   context: RunContext,
 ): Promise<UpgradeStateUpdate> {
-  const { packageName, targetVersion } = context.request;
-  const outcome = await input.handle.tools.update_dependency({ packageName, targetVersion });
-  if (outcome.outcome !== "passed") {
-    return {
-      blockingConditions: [
-        `moving ${packageName} to ${targetVersion} failed with exit code ${String(outcome.exitCode)}`,
-      ],
-    };
+  const moved = await moveAllDependencies(input, context);
+  if (moved.blocking !== undefined) {
+    return { blockingConditions: moved.blocking };
+  }
+  const renamed = await applyRenameFindings(input, context, new Set());
+  if (renamed.blocking !== undefined) {
+    return { blockingConditions: renamed.blocking };
   }
   return {
     dependencyMoved: true,
-    addressedFindingIds: input.state.findings
-      .filter((finding) => finding.noSourceChangeRequired === true)
-      .map((finding) => finding.id),
+    addressedFindingIds: [
+      ...input.state.findings.filter((finding) => finding.noSourceChangeRequired === true).map((finding) => finding.id),
+      ...renameFindingIds(input.state.findings),
+    ],
+    fileChanges: [...moved.fileChanges, ...renamed.fileChanges],
+  };
+}
+
+async function moveAllDependencies(
+  input: WorkerInput,
+  context: RunContext,
+): Promise<{ readonly fileChanges: readonly FileChange[]; readonly blocking?: readonly string[] }> {
+  const lockfilePath = join(context.facts.worktreePath, context.facts.lockfile);
+  const before = lockfilePackageVersions(context.facts.packageManager, lockfilePath);
+  const allowed = new Set(upgradeTargets(context.request).map((target) => target.packageName));
+
+  for (const target of upgradeTargets(context.request)) {
+    const outcome = await input.handle.tools.update_dependency({
+      packageName: target.packageName,
+      targetVersion: target.targetVersion,
+    });
+    if (outcome.outcome !== "passed") {
+      return {
+        fileChanges: [],
+        blocking: [
+          `moving ${target.packageName} to ${target.targetVersion} failed with exit code ${String(outcome.exitCode)}`,
+        ],
+      };
+    }
+  }
+
+  if (!context.request.allowTransitive) {
+    const extra = unexpectedLockfileMoves(
+      before,
+      lockfilePackageVersions(context.facts.packageManager, lockfilePath),
+      allowed,
+    );
+    if (extra.length > 0) {
+      return {
+        fileChanges: [],
+        blocking: [
+          `this upgrade also moved ${extra.join("; ")}. Re-run with --allow-transitive if those moves are intended.`,
+        ],
+      };
+    }
+  }
+
+  const reason = upgradeTargets(context.request)
+    .map((target) => `${target.packageName} ${target.targetVersion}`)
+    .join(", ");
+  return {
     fileChanges: [
       {
         path: context.facts.lockfile,
-        // Hashes are the package manager's business: it rewrote the lockfile, and
-        // this worker never read it.
         beforeHash: null,
         afterHash: null,
         owner: "implementer",
-        reason: `moved to ${packageName} ${targetVersion}`,
+        reason: `moved to ${reason}`,
       },
     ],
   };
+}
+
+function renameFindingIds(findings: readonly MigrationFinding[]): readonly string[] {
+  return findings.filter((finding) => finding.replacement !== undefined).map((finding) => finding.id);
+}
+
+async function applyRenameFindings(
+  input: WorkerInput,
+  context: RunContext,
+  alreadyWritten: ReadonlySet<string>,
+): Promise<{ readonly fileChanges: readonly FileChange[]; readonly blocking?: readonly string[] }> {
+  const changes: FileChange[] = [];
+  const seen = new Set<string>();
+  for (const finding of input.state.findings) {
+    const replacement = finding.replacement;
+    if (replacement === undefined) {
+      continue;
+    }
+    for (const file of finding.affectedFiles) {
+      if (alreadyWritten.has(file) || isTestFile(file) || !isSourceFile(file) || seen.has(file)) {
+        continue;
+      }
+      seen.add(file);
+      const path = inWorktree(context, file);
+      const current = await input.handle.tools.read_file({ path });
+      let next = current.content;
+      for (const other of input.state.findings) {
+        if (other.replacement !== undefined) {
+          next = renameExportedMember(
+            next,
+            other.replacement.packageName,
+            other.replacement.from,
+            other.replacement.to,
+          );
+        }
+      }
+      if (next === current.content) {
+        continue;
+      }
+      const written = await input.handle.tools.write_source_file({
+        path,
+        expectedBeforeHash: current.hash,
+        content: next,
+      });
+      changes.push({
+        path: file,
+        beforeHash: current.hash,
+        afterHash: written.afterHash,
+        owner: "implementer",
+        reason: `renamed ${replacement.from} to ${replacement.to}`,
+      });
+    }
+  }
+  return { fileChanges: changes };
 }
 
 /**
@@ -186,22 +297,18 @@ async function migrateToEsm(
     };
   }
 
-  const { packageName, targetVersion } = context.request;
-  const moved = await input.handle.tools.update_dependency({ packageName, targetVersion });
-  if (moved.outcome !== "passed") {
-    return {
-      blockingConditions: [
-        `moving ${packageName} to ${targetVersion} failed with exit code ${String(moved.exitCode)}`,
-      ],
-    };
+  const moved = await moveAllDependencies(input, context);
+  if (moved.blocking !== undefined) {
+    return { blockingConditions: moved.blocking };
   }
 
-  const changes: FileChange[] = [];
+  const changes: FileChange[] = [...moved.fileChanges];
   for (const { file, path, hash, converted, applied } of plan.convert) {
+    const renamed = applyRenamesToSource(converted, input.state.findings);
     const written = await input.handle.tools.write_source_file({
       path,
       expectedBeforeHash: hash,
-      content: converted,
+      content: renamed,
     });
     changes.push({
       path: file,
@@ -230,6 +337,16 @@ async function migrateToEsm(
     reason: `set type to module, from ${typeSet.previousValue ?? "unset"}`,
   });
 
+  const renamedFiles = await applyRenameFindings(
+    input,
+    context,
+    new Set(plan.convert.map((entry) => entry.file)),
+  );
+  if (renamedFiles.blocking !== undefined) {
+    return { blockingConditions: renamedFiles.blocking };
+  }
+  changes.push(...renamedFiles.fileChanges);
+
   input.audit.record({
     phase: "implement",
     worker: "implementer",
@@ -249,7 +366,7 @@ async function migrateToEsm(
   return {
     dependencyMoved: true,
     fileChanges: changes,
-    addressedFindingIds: [finding.id],
+    addressedFindingIds: [finding.id, ...renameFindingIds(input.state.findings)],
     // Test files are call sites this worker is not allowed to touch. Saying so
     // keeps the reason for the verification failure that follows legible.
     ...(plan.tests.length > 0
@@ -330,6 +447,21 @@ function describeRefusals(refusals: readonly Refusal[]): string {
 
 function relativize(path: string, root: string): string {
   return path.startsWith(`${root}/`) ? path.slice(root.length + 1) : path;
+}
+
+function applyRenamesToSource(source: string, findings: readonly MigrationFinding[]): string {
+  let next = source;
+  for (const finding of findings) {
+    if (finding.replacement !== undefined) {
+      next = renameExportedMember(
+        next,
+        finding.replacement.packageName,
+        finding.replacement.from,
+        finding.replacement.to,
+      );
+    }
+  }
+  return next;
 }
 
 export type { ElevationRequest };

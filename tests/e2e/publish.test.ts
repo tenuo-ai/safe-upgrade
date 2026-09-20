@@ -93,7 +93,6 @@ describeE2E("publishing a verified upgrade", () => {
         targetVersion: "5.0.0",
         artifactsDirectory: join(artifacts, "published"),
         createDraftPullRequest: true,
-        publishApproved: true,
         approvals: [
           {
             id: String(pending[0]?.id),

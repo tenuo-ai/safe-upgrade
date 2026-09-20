@@ -115,7 +115,7 @@ async function runBaseline(
     const outcome = await handle.tools.run_check({
       kind: purpose,
       script,
-      workspace: "",
+      workspace: options.facts.workspaceSelector,
     });
     checks.push(recordCheck(audit, "inspector", "baseline_verify", outcome));
   }

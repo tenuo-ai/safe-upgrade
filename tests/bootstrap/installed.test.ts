@@ -15,14 +15,25 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { isExactVersion, resolveInstalledVersion } from "@safe-upgrade/bootstrap";
+import {
+  isExactVersion,
+  lockfilePackageVersions,
+  resolveInstalledVersion,
+  unexpectedLockfileMoves,
+} from "@safe-upgrade/bootstrap";
 import type { PackageManager } from "@safe-upgrade/domain";
 
-function resolve(manager: PackageManager, filename: string, content: string, packageName: string) {
+function resolve(
+  manager: PackageManager,
+  filename: string,
+  content: string,
+  packageName: string,
+  workspace = "",
+) {
   const directory = mkdtempSync(join(tmpdir(), "lock-"));
   const path = join(directory, filename);
   writeFileSync(path, content);
-  return resolveInstalledVersion(manager, path, packageName);
+  return resolveInstalledVersion(manager, path, packageName, workspace);
 }
 
 const NPM_V3 = JSON.stringify({
@@ -172,6 +183,10 @@ describe("pnpm", () => {
     expect(resolve("pnpm", "pnpm-lock.yaml", linked, "ms")).toBeNull();
   });
 
+  it("reads the workspace importer when one is named", () => {
+    expect(resolve("pnpm", "pnpm-lock.yaml", PNPM, "ms", "packages/child")).toBe("2.0.0");
+  });
+
   it("does not read the store listing as a resolution", () => {
     // `packages:` lists every version in the store, including several of one package. Only
     // `importers` says what this project chose.
@@ -220,6 +235,17 @@ describe("a missing file", () => {
     // Detection turns null into a refusal with an explanation. A throw from here would
     // surface as an internal error instead.
     expect(resolveInstalledVersion("npm", "/nonexistent/package-lock.json", "ms")).toBeNull();
+  });
+});
+
+describe("unexpected lockfile moves", () => {
+  it("names packages that changed and were not on the run", () => {
+    const directory = mkdtempSync(join(tmpdir(), "lock-"));
+    const path = join(directory, "package-lock.json");
+    writeFileSync(path, NPM_V3);
+    const before = lockfilePackageVersions("npm", path);
+    const extra = unexpectedLockfileMoves(before, { ...before, picocolors: ["1.1.1"] }, new Set(["ms"]));
+    expect(extra).toEqual(["picocolors <absent> -> 1.1.1"]);
   });
 });
 
