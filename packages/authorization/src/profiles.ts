@@ -92,7 +92,7 @@ export function workerProfiles(context: CeilingContext): Readonly<Record<WorkerI
       // `read_git_diff` because the diff policy is this worker's responsibility: it
       // has to see what changed to refuse a change that weakened a test rather than
       // satisfied it. Read-only, like everything else it holds.
-      pick(ceilings, [...READ_ONLY, "read_git_diff", "install_dependencies", "run_check"]),
+      pick(ceilings, [...READ_ONLY, "read_git_status", "read_git_diff", "install_dependencies", "run_check"]),
       "install_dependencies",
       // A verification install that is allowed to rewrite the lockfile is not a
       // verification of the lockfile we are shipping.

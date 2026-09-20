@@ -131,6 +131,7 @@ export function createSurfaceTools(context: ToolContext): {
             },
             context.limits,
             isolatedHome(scratch),
+            { network: "allow", writableRoots: [scratch] },
           );
           if (install.exitCode !== 0) {
             return unreadable(`installing ${args.packageName}@${args.version} failed`);
@@ -149,6 +150,7 @@ export function createSurfaceTools(context: ToolContext): {
             } satisfies CommandSpec,
             context.limits,
             isolatedHome(scratch),
+            { network: "deny", writableRoots: [scratch] },
           );
           if (probe.exitCode !== 0) {
             return unreadable(`loading ${args.packageName}@${args.version} failed`);

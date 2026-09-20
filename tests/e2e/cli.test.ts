@@ -40,10 +40,18 @@ interface Invocation {
 }
 
 function run(args: readonly string[], env: Readonly<Record<string, string>> = {}): Invocation {
+  const sandboxTestOverride = process.env["SAFE_UPGRADE_ALLOW_UNSANDBOXED"];
   try {
     const stdout = execFileSync(process.execPath, ["--no-warnings", BIN, ...args], {
       encoding: "utf8",
-      env: { PATH: process.env["PATH"] ?? "", HOME: process.env["HOME"] ?? "", ...env },
+      env: {
+        PATH: process.env["PATH"] ?? "",
+        HOME: process.env["HOME"] ?? "",
+        ...(sandboxTestOverride === undefined
+          ? {}
+          : { SAFE_UPGRADE_ALLOW_UNSANDBOXED: sandboxTestOverride }),
+        ...env,
+      },
       stdio: ["ignore", "pipe", "pipe"],
     });
     return { status: 0, stdout, stderr: "" };

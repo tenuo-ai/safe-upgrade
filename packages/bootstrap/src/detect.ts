@@ -127,6 +127,7 @@ export function detectRepositoryFacts(request: DetectionRequest): Detection {
     request.commandTimeoutMs,
     warnings,
   );
+  const testFramework = detectTestFramework(declaring);
 
   const facts: RepositoryFacts = {
     worktreePath: root,
@@ -143,9 +144,30 @@ export function detectRepositoryFacts(request: DetectionRequest): Detection {
     companions,
     verificationCommands: [installCommand(manager, root, request.commandTimeoutMs), ...commands],
     existingCiFiles: detectCiFiles(root),
+    ...(testFramework === null ? {} : { testFramework }),
   };
 
   return { facts, absentChecks: absent, checkScripts: scripts, warnings };
+}
+
+function detectTestFramework(manifest: Manifest): "node" | "vitest" | "jest" | "mocha" | null {
+  const test = manifest.scripts["test"];
+  if (typeof test !== "string") {
+    return null;
+  }
+  if (/\bvitest\b/.test(test)) {
+    return "vitest";
+  }
+  if (/\bjest\b/.test(test)) {
+    return "jest";
+  }
+  if (/\bmocha\b/.test(test)) {
+    return "mocha";
+  }
+  if (/\bnode\s+--test\b/.test(test)) {
+    return "node";
+  }
+  return null;
 }
 
 /**

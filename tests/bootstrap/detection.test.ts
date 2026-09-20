@@ -48,6 +48,7 @@ describe("the fixture as committed", () => {
     expect(facts.manifests).toEqual(["package.json"]);
     expect(facts.workspaceRoots).toEqual([]);
     expect(facts.existingCiFiles).toEqual([join(".github", "workflows", "ci.yml")]);
+    expect(facts.testFramework).toBe("node");
     expect(warnings).toEqual([]);
 
     // The fixture defines test and build and nothing else, so it has no
@@ -178,6 +179,25 @@ describe("scripts the run will use as a gate", () => {
     repo = createFixtureRepo();
     patchManifest({ scripts: { test: "   ", build: "node scripts/build.mjs" } });
     expect(detect().absentChecks).toContain("test");
+  });
+});
+
+describe("test framework detection", () => {
+  it.each([
+    ["vitest run", "vitest"],
+    ["jest --runInBand", "jest"],
+    ["mocha test/", "mocha"],
+    ["node --test", "node"],
+  ] as const)("recognizes %s", (script, expected) => {
+    repo = createFixtureRepo();
+    patchManifest({ scripts: { test: script } });
+    expect(detect().facts.testFramework).toBe(expected);
+  });
+
+  it("does not guess for an unknown runner", () => {
+    repo = createFixtureRepo();
+    patchManifest({ scripts: { test: "ava" } });
+    expect(detect().facts.testFramework).toBeUndefined();
   });
 });
 

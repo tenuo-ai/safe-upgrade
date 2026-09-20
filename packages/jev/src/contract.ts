@@ -6,9 +6,11 @@
  * every question it is asked is a choice among candidates that trusted code
  * computed first.
  *
- * Keeping this contract free of any SDK import is deliberate. The real adapter
- * and the deterministic fake implement the same interface, so the router cannot
- * tell them apart and the graph tests do not need network access.
+ * Inputs may carry bounded relevant test or patch excerpts when the caller has
+ * explicitly selected Jev. Keeping this contract free of any SDK import is
+ * deliberate. The real adapter and the deterministic fake implement the same
+ * interface, so the router cannot tell them apart and the graph tests do not
+ * need network access.
  */
 
 import type { CheckPurpose, Phase, RoutableAction, WorkerId } from "@safe-upgrade/domain";
@@ -61,8 +63,12 @@ export interface RouteChoice {
 export interface TestCoverageInput {
   readonly finding: UnresolvedFinding;
   readonly requiredChange: string;
-  /** Existing tests that reach the affected path, as file and title pairs. */
-  readonly candidateTests: readonly { readonly file: string; readonly title: string }[];
+  /** Existing tests that reach the affected path, with bounded source for semantic assessment. */
+  readonly candidateTests: readonly {
+    readonly file: string;
+    readonly title: string;
+    readonly source?: string;
+  }[];
   readonly baselinePassed: boolean;
 }
 
@@ -118,7 +124,8 @@ export interface ProseBreakDecision {
 
 export interface MigrationCompletenessInput {
   readonly findings: readonly UnresolvedFinding[];
-  readonly changedFiles: readonly string[];
+  /** Bounded patch excerpts, supplied only when the user explicitly selects Jev. */
+  readonly changedFiles: readonly { readonly path: string; readonly patch: string }[];
   readonly checksPassed: readonly CheckPurpose[];
 }
 

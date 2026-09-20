@@ -93,6 +93,11 @@ export async function main(argv: readonly string[], streams: Streams): Promise<n
     // Before the run, not after: it changes how the result should be read.
     streams.err(`safe-upgrade: ${choice.warning}\n`);
   }
+  if (streams.env["SAFE_UPGRADE_ALLOW_UNSANDBOXED"] === "1") {
+    streams.err(
+      "safe-upgrade: WARNING: OS process isolation is disabled. Use SAFE_UPGRADE_ALLOW_UNSANDBOXED=1 only inside isolated test infrastructure.\n",
+    );
+  }
 
   let report: RunReport;
   try {

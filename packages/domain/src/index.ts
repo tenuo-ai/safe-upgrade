@@ -19,6 +19,7 @@ export type {
   RouteSource,
   RunStatus,
   TestAssessment,
+  TestFramework,
   UpgradeRequest,
   UpgradeTarget,
   CompanionFact,

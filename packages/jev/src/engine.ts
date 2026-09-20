@@ -8,8 +8,9 @@
  * What the engine is asked is narrow by construction. `systemOne` answers bounded questions:
  * a choice among labels that trusted code computed, or a probability for a yes/no. It does
  * not return prose, and this adapter does not ask it to. That is the property spec 10.4
- * requires — no source, no commands, no paths, no worker identities, and nothing that could
- * be read back as a route the router never offered.
+ * requires. Semantic checks receive only bounded, relevant test and patch excerpts, and
+ * nothing that comes back can be read as code, a command, a path, or a route the router never
+ * offered.
  *
  * Two consequences worth stating, because they look like omissions.
  *
@@ -213,7 +214,7 @@ export class JevDecisionEngine implements DecisionEngine {
       const key = `finding_${String(index)}`;
       keys.set(key, finding.id);
       questions[key] = noul(
-        `Do the listed changed files address this concern: ${finding.summary}`,
+        `Do the listed patch excerpts address this concern: ${finding.summary}`,
       );
     }
 
@@ -260,8 +261,9 @@ export class JevDecisionEngine implements DecisionEngine {
   ): Promise<Readonly<Record<string, Answer>>> {
     try {
       const result = await this.client.systemOne({
-        // The compact factual state the caller assembled, per spec 10.2. Never a repository,
-        // never a log, never release prose.
+        // The compact state the caller assembled, per spec 10.2. It may contain
+        // bounded relevant source excerpts for semantic questions, never a full
+        // repository, command log, credential, or process environment.
         state: asEntry(state),
         questions,
       });

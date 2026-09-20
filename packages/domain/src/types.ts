@@ -35,6 +35,8 @@ export type PackageManager = "npm" | "pnpm" | "yarn";
 
 export type CheckPurpose = "install" | "test" | "typecheck" | "lint" | "build";
 
+export type TestFramework = "node" | "vitest" | "jest" | "mocha";
+
 /** One exact package and version this run may move. */
 export interface UpgradeTarget {
   readonly packageName: string;
@@ -137,6 +139,8 @@ export interface RepositoryFacts {
   readonly companions: readonly CompanionFact[];
   readonly verificationCommands: readonly CommandSpec[];
   readonly existingCiFiles: readonly string[];
+  /** Test API used when a focused load/regression test has to be added. */
+  readonly testFramework?: TestFramework;
 }
 
 export interface CompanionFact {

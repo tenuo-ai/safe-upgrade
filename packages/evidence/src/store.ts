@@ -17,6 +17,8 @@ export type AuditEventType =
   | "repository_inspected"
   | "research_completed"
   | "prose_assessed"
+  | "test_coverage_semantically_assessed"
+  | "migration_completeness_assessed"
   | "elevation_granted"
   | "elevation_refused"
   | "elevation_requested"

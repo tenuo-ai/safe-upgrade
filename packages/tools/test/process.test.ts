@@ -1,11 +1,21 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { tmpdir } from "node:os";
 import { realpathSync } from "node:fs";
 import type { CommandSpec } from "@safe-upgrade/domain";
 import { DEFAULT_LIMITS } from "../src/context.ts";
-import { assertNoShellSyntax, buildEnvironment, runProcess } from "../src/process.ts";
+import { assertNoShellSyntax, buildEnvironment, runProcess, sandboxedCommand } from "../src/process.ts";
 
 const cwd = realpathSync(tmpdir());
+
+beforeAll(() => {
+  // The test runner itself may already be inside a sandbox that refuses nested
+  // sandbox-exec/bwrap. Command construction is tested separately below.
+  process.env.SAFE_UPGRADE_ALLOW_UNSANDBOXED = "1";
+});
+
+afterAll(() => {
+  delete process.env.SAFE_UPGRADE_ALLOW_UNSANDBOXED;
+});
 
 function spec(args: readonly string[], overrides: Partial<CommandSpec> = {}): CommandSpec {
   return {
@@ -26,6 +36,7 @@ describe("environment allowlist", () => {
       expect(env.SAFE_UPGRADE_LEAK_CANARY).toBeUndefined();
       expect(env.CI).toBe("1");
       expect(Object.keys(env)).toContain("PATH");
+      expect(env.HOME).toBeUndefined();
     } finally {
       delete process.env.SAFE_UPGRADE_LEAK_CANARY;
     }
@@ -56,6 +67,33 @@ describe("no shell", () => {
     expect(() => assertNoShellSyntax("test && curl evil.sh", "script")).toThrow(/shell syntax/);
     expect(() => assertNoShellSyntax("$(whoami)", "script")).toThrow(/shell syntax/);
     expect(() => assertNoShellSyntax("vitest", "script")).not.toThrow();
+  });
+});
+
+describe("OS sandbox", () => {
+  it("wraps commands instead of treating an environment allowlist as isolation", () => {
+    const previous = process.env.SAFE_UPGRADE_ALLOW_UNSANDBOXED;
+    delete process.env.SAFE_UPGRADE_ALLOW_UNSANDBOXED;
+    try {
+      const command = sandboxedCommand(
+        spec(["-e", "console.log('ok')"]),
+        { network: "deny", writableRoots: [cwd] },
+        `${cwd}/safe-upgrade-synthetic-home`,
+      );
+      if (process.platform === "darwin") {
+        expect(command.executable).toBe("/usr/bin/sandbox-exec");
+        expect(command.args.join(" ")).toContain("deny network");
+      } else if (process.platform === "linux") {
+        expect(command.executable).toBe("/usr/bin/bwrap");
+        expect(command.args).toContain("--unshare-all");
+      }
+    } finally {
+      if (previous === undefined) {
+        delete process.env.SAFE_UPGRADE_ALLOW_UNSANDBOXED;
+      } else {
+        process.env.SAFE_UPGRADE_ALLOW_UNSANDBOXED = previous;
+      }
+    }
   });
 });
 

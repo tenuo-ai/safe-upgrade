@@ -17,6 +17,8 @@
  */
 
 import { ToolExecutionError } from "@safe-upgrade/domain";
+import { mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { CheckOutcome, CheckPurpose, CommandSpec, PackageManager } from "@safe-upgrade/domain";
 import { defineTool, type RawTool, type ToolContext } from "./context.ts";
 import { assertNoShellSyntax, runProcess, type RunOutcome } from "./process.ts";
@@ -136,14 +138,15 @@ function installArgs(manager: PackageManager, args: InstallArgs): string[] {
   }
 }
 
-function updateArgs(manager: PackageManager, spec: string): string[] {
+/** Exported for proving that every manager suppresses dependency lifecycle scripts. */
+export function updateArgs(manager: PackageManager, spec: string): string[] {
   switch (manager) {
     case "pnpm":
-      return ["add", spec, "--save-exact"];
+      return ["add", spec, "--save-exact", "--ignore-scripts"];
     case "npm":
-      return ["install", spec, "--save-exact"];
+      return ["install", spec, "--save-exact", "--ignore-scripts"];
     case "yarn":
-      return ["add", spec, "--exact"];
+      return ["add", spec, "--exact", "--ignore-scripts"];
   }
 }
 
@@ -182,6 +185,27 @@ export function createPackageTools(context: ToolContext): {
   const manager = context.packageManager;
   assertExecutable(manager);
   const cwd = context.paths.realRoot;
+  // Reuse downloads across the baseline, update, and verification installs in
+  // this one disposable run. In normal operation the cache lives beside the
+  // worktree and is removed with the run's temporary directory. The explicit
+  // unsafe test override may reuse the host cache because it already disables
+  // the process sandbox and is announced by the CLI.
+  const packageHome = join(dirname(cwd), `.safe-upgrade-package-home-${context.runId}`);
+  mkdirSync(packageHome, { recursive: true });
+  const unsafeTestHome =
+    process.env["SAFE_UPGRADE_ALLOW_UNSANDBOXED"] === "1"
+      ? process.env["HOME"]
+      : undefined;
+  const effectiveHome = unsafeTestHome === undefined || unsafeTestHome === ""
+    ? packageHome
+    : unsafeTestHome;
+  const packageEnvironment = {
+    HOME: effectiveHome,
+    USERPROFILE: effectiveHome,
+    TMPDIR: effectiveHome,
+    npm_config_cache: join(effectiveHome, ".npm"),
+  };
+  const packageIsolation = { network: "allow" as const, writableRoots: [cwd, packageHome] };
 
   return {
     installDependencies: defineTool<InstallArgs, CommandOutcome>(
@@ -202,7 +226,10 @@ export function createPackageTools(context: ToolContext): {
           purpose: "install",
           timeoutMs: context.limits.commandTimeoutMs,
         };
-        return toCommandOutcome(command, await runProcess(command, context.limits));
+        return toCommandOutcome(
+          command,
+          await runProcess(command, context.limits, packageEnvironment, packageIsolation),
+        );
       },
     ),
 
@@ -237,7 +264,10 @@ export function createPackageTools(context: ToolContext): {
           purpose: "install",
           timeoutMs: context.limits.commandTimeoutMs,
         };
-        return toCommandOutcome(command, await runProcess(command, context.limits));
+        return toCommandOutcome(
+          command,
+          await runProcess(command, context.limits, packageEnvironment, packageIsolation),
+        );
       },
     ),
 
@@ -258,7 +288,13 @@ export function createPackageTools(context: ToolContext): {
           purpose: args.kind,
           timeoutMs: context.limits.commandTimeoutMs,
         };
-        return toCommandOutcome(command, await runProcess(command, context.limits));
+        return toCommandOutcome(
+          command,
+          await runProcess(command, context.limits, packageEnvironment, {
+            network: "deny",
+            writableRoots: [cwd, packageHome],
+          }),
+        );
       },
     ),
   };

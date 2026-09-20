@@ -13,8 +13,8 @@ export type {
 } from "./files.ts";
 export { ABSENT, createFileTools } from "./files.ts";
 
-export type { RunOutcome } from "./process.ts";
-export { assertNoShellSyntax, buildEnvironment, runProcess } from "./process.ts";
+export type { ProcessIsolation, RunOutcome } from "./process.ts";
+export { assertNoShellSyntax, buildEnvironment, runProcess, sandboxedCommand } from "./process.ts";
 
 export type {
   CheckKind,
@@ -25,7 +25,7 @@ export type {
   RunCheckArgs,
   UpdateDependencyArgs,
 } from "./packages.ts";
-export { assertSafeScriptName, createPackageTools, } from "./packages.ts";
+export { assertSafeScriptName, createPackageTools, updateArgs } from "./packages.ts";
 
 export type {
   FetchReleaseDocumentArgs,

@@ -13,6 +13,8 @@ The CLI is not on npm yet. Run it from this checkout.
 ## Requirements
 
 - Node 22.18 or newer (the binary loads TypeScript sources)
+- macOS with `/usr/bin/sandbox-exec`, or Linux with Bubblewrap installed at
+  `/usr/bin/bwrap`
 - A git repository with exactly one of `package-lock.json`, `pnpm-lock.yaml`, or `yarn.lock`
 - The package is a direct dependency of the root or of one workspace
 - `NODE_ENV=development` for a local trial without a Tenuo warrant
@@ -136,10 +138,12 @@ Try `fixtures/legacy-app` (`escape-string-regexp@5.0.0`) for an ESM migration
 that asks for approval, and `fixtures/prefix-tool` (`postcss@8.4.35`) for a
 removed export the suite does not catch.
 
-## Engine
+## Jev-guided upgrade
 
-The default route is deterministic: a pure function of run state. That is a
-supported configuration.
+Jev makes the bounded judgements that mechanical checks cannot: whether a test
+actually covers a migration finding, whether the completed patch addresses all
+findings, and which already-authorized specialist should act next. Tenuo still
+decides which tools that specialist may invoke and with which arguments.
 
 ```bash
 NODE_ENV=development pnpm safe-upgrade cookie@1.0.2 \
@@ -151,6 +155,28 @@ NODE_ENV=development pnpm safe-upgrade cookie@1.0.2 \
 `--confidence` (default 0.6) the engine's answer is replaced by the
 deterministic order.
 
+Selecting Jev sends bounded source from only the tests that reach an affected
+file, plus bounded excerpts of the candidate patch, to the configured Jev API.
+Secrets and process environment variables are never included. Use the
+deterministic engine when repository source must remain entirely local.
+
+The default route is deterministic and remains a supported configuration. It
+uses the same Tenuo capability boundaries and verification gates without the
+semantic Jev assessments.
+
+## Process isolation
+
+Package installs may use the network, but dependency lifecycle scripts are
+disabled. Tests, builds, typechecks, and package surface probes run without
+network access. Every child process receives a temporary empty home directory,
+cannot read the user's real home, and may write only to the disposable worktree
+and its temporary scratch directory.
+
+The command fails closed when the operating-system sandbox is unavailable.
+`SAFE_UPGRADE_ALLOW_UNSANDBOXED=1` exists only for test infrastructure that is
+already isolated. The CLI prints a warning whenever it is set. Do not use it for
+a normal upgrade run.
+
 ## Environment
 
 | Variable | Used for |
@@ -159,6 +185,7 @@ deterministic order.
 | `TYPESAFE_API_KEY` | `--engine jev`. Never a flag. |
 | `TENUO_ROOT_PUBLIC_KEY`, `TENUO_RUN_WARRANT`, `TENUO_RUN_HOLDER_SECRET` | Production: narrow a warrant an issuer granted. All three, or none. |
 | `NODE_ENV=development` | Local trial that mints its own authority. Reported on stderr. |
+| `SAFE_UPGRADE_ALLOW_UNSANDBOXED=1` | Disables OS process isolation for already-sandboxed test infrastructure only. Prints a warning. |
 
 `pnpm safe-upgrade --help` is the flag list.
 

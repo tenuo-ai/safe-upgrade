@@ -262,7 +262,11 @@ describe("assessing whether the change addresses every finding", () => {
     { id: "a", summary: "first", affectedFileCount: 1, hasVerification: true },
     { id: "b", summary: "second", affectedFileCount: 2, hasVerification: false },
   ];
-  const input = { findings, changedFiles: ["src/a.js"], checksPassed: ["test" as const] };
+  const input = {
+    findings,
+    changedFiles: [{ path: "src/a.js", patch: "+fixed();" }],
+    checksPassed: ["test" as const],
+  };
 
   it("names which finding is unaddressed, not just that one is", async () => {
     // The only part of the answer a worker can act on.

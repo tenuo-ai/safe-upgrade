@@ -35,6 +35,13 @@ caught it. The implementer cannot weaken that test. The verifier cannot
 adjust what it is verifying. No specialist can turn on dependency lifecycle
 scripts.
 
+Tenuo restricts the tool calls made by each specialist. A separate operating
+system sandbox restricts code launched by those tools. Package downloads may
+use the network, while probes and repository checks cannot. Child processes see
+a temporary empty home instead of the user's credentials and can write only to
+the disposable worktree and scratch directory. The run fails closed if that
+sandbox is unavailable.
+
 ## What research has to establish
 
 Every finding cites a document the run fetched (registry metadata or a
@@ -64,13 +71,17 @@ call site is not in that suite.
 
 ## What "verified" means
 
-The classifier is not a model. `verified` means all of these held:
+The final status is computed by deterministic policy. `verified` means all of
+these held:
 
 - a baseline was recorded before any change
 - the manifest names the exact target version
 - every finding is addressed or explicitly left for a person
 - the same required checks that ran at baseline pass after the change
 - the diff did not weaken a test (skip, `.only`, a deleted test file)
+- verification commands did not change the candidate they were checking
+- when Jev is enabled, its bounded completeness review found no unresolved
+  migration finding
 
 Anything short of that is `partial`, `blocked`, `human_required`, or
 `indeterminate`. Exit codes are in the README.
@@ -98,9 +109,18 @@ and `human_required`, because those runs never reach the publisher.
 By default the next step is a fixed function of the current state. That is
 intentional: a pipeline can replay a run and get the same route.
 
-`--engine jev` asks Jev to pick from the steps that are already eligible.
-It cannot invent a step, authorize a tool, or publish before verification.
-A low-confidence answer is replaced by the default order.
+`--engine jev` asks Jev to pick from the steps that are already eligible. It
+also judges whether candidate tests semantically cover a finding and whether
+the final migration accounts for every finding. These judgements can require
+more work or veto a `verified` result. They cannot authorize a tool, add a new
+step, or publish before deterministic verification. A low-confidence routing
+answer is replaced by the default order.
+
+Semantic assessment needs semantic evidence. When Jev is explicitly selected,
+the request includes at most 4,000 characters from each relevant test and each
+changed-file patch. Unrelated tests, full repository files, command output,
+environment variables, warrants, and credentials are not sent. The
+deterministic engine keeps all repository source local.
 
 ## Authority for the process itself
 

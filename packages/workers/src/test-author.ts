@@ -15,7 +15,7 @@
  */
 
 import { count } from "@safe-upgrade/domain";
-import type { FileChange, MigrationFinding, TestAssessment } from "@safe-upgrade/domain";
+import type { FileChange, MigrationFinding, TestAssessment, TestFramework } from "@safe-upgrade/domain";
 import type { UpgradeStateUpdate, WorkerFn, WorkerInput } from "@safe-upgrade/graph";
 import { inWorktree, type RunContext } from "./context.ts";
 import { convertToEsm } from "./migrate/to-esm.ts";
@@ -45,11 +45,62 @@ async function assess(input: WorkerInput, context: RunContext): Promise<UpgradeS
       continue;
     }
     const unreached = finding.affectedFiles.filter((file) => !graph.reachableFromTests.has(file));
-    if (unreached.length === 0) {
+    if (unreached.length > 0) {
+      uncovered.push(finding.id);
+      explanations.push(`${finding.id}: no test reaches ${unreached.join(", ")}`);
       continue;
     }
-    uncovered.push(finding.id);
-    explanations.push(`${finding.id}: no test reaches ${unreached.join(", ")}`);
+
+    // Reachability proves load-time compatibility, but it does not prove a test
+    // asserts a behavioral or API migration. Ask Jev the bounded semantic
+    // question for those findings. A refusal or unavailable engine is treated as
+    // missing coverage, never as an implicit yes.
+    if (finding.id === "esm-only-at-target" || finding.id === "node-requirement-raised") {
+      continue;
+    }
+    const candidateTests = graph.testFiles
+      .filter((testFile) =>
+        finding.affectedFiles.some((affected) =>
+          graph.reachableByTest.get(testFile)?.has(affected),
+        ),
+      )
+      .map((file) => ({
+        file,
+        title: testTitles(graph.contents.get(file) ?? "").join("; ") || "untitled test",
+        source: (graph.contents.get(file) ?? "").slice(0, 4_000),
+      }));
+    try {
+      const decision = await input.engine.assessTestCoverage({
+        finding: {
+          id: finding.id,
+          summary: finding.releaseClaim,
+          affectedFileCount: finding.affectedFiles.length,
+          hasVerification: false,
+        },
+        requiredChange: finding.requiredChange,
+        candidateTests,
+        baselinePassed: input.state.baselineChecks.every((check) => check.outcome === "passed"),
+      });
+      input.audit.record({
+        phase: "assess_verification",
+        worker: "test_author",
+        type: "test_coverage_semantically_assessed",
+        payload: {
+          findingId: finding.id,
+          sufficient: decision.sufficient,
+          confidence: decision.confidence,
+          candidateTests: candidateTests.map(({ file, title }) => ({ file, title })),
+        },
+      });
+      if (decision.sufficient) {
+        continue;
+      }
+      uncovered.push(finding.id);
+      explanations.push(`${finding.id}: ${decision.rationale}`);
+    } catch {
+      uncovered.push(finding.id);
+      explanations.push(`${finding.id}: semantic test coverage was not established`);
+    }
   }
 
   const assessment: TestAssessment = {
@@ -184,15 +235,26 @@ async function addMissingTests(
 
   for (const finding of input.state.findings) {
     for (const file of unreachedFiles(finding, graph)) {
+      const framework = context.facts.testFramework;
+      if (framework === undefined) {
+        // A test that the repository's runner never discovers is worse than no
+        // generated test because it creates false confidence.
+        continue;
+      }
       const target = await input.handle.tools.read_file({ path: inWorktree(context, file) });
       const exported = exportedNames(target.content);
       if (exported.length === 0) {
         continue;
       }
-      const testPath = inWorktree(context, testPathFor(file));
+      const testPath = inWorktree(context, testPathFor(file, framework));
       // Written in the module system the package is *going* to use, since the
       // implementer's migration is what this test has to survive.
-      const content = loadTest(file, exported, targetIsEsm || isEsm(target.content));
+      const content = loadTest(
+        file,
+        exported,
+        targetIsEsm || isEsm(target.content),
+        framework,
+      );
       const written = await input.handle.tools.write_test_file({
         path: testPath,
         // Absent rather than a hash: this file is being created, and claiming a
@@ -201,7 +263,7 @@ async function addMissingTests(
         content,
       });
       changes.push({
-        path: testPathFor(file),
+        path: testPathFor(file, framework),
         beforeHash: null,
         afterHash: written.afterHash,
         owner: "test_author" as const,
@@ -221,6 +283,9 @@ function unreachedFiles(finding: MigrationFinding, graph: ModuleGraph): readonly
 
 interface ModuleGraph {
   readonly testFiles: readonly string[];
+  readonly contents: ReadonlyMap<string, string>;
+  /** Per-test reachability keeps semantic review scoped to relevant test source. */
+  readonly reachableByTest: ReadonlyMap<string, ReadonlySet<string>>;
   /** Worktree-relative files a test reaches, directly or through a relative import. */
   readonly reachableFromTests: ReadonlySet<string>;
 }
@@ -248,21 +313,34 @@ async function moduleGraph(input: WorkerInput, context: RunContext): Promise<Mod
 
   const testFiles = [...relativePaths].filter(isTestFile).sort();
   const reachable = new Set<string>();
-  const queue = [...testFiles];
-  while (queue.length > 0) {
-    const current = queue.pop() as string;
-    if (reachable.has(current)) {
-      continue;
-    }
-    reachable.add(current);
-    for (const specifier of relativeSpecifiers(contents.get(current) ?? "")) {
-      const resolved = resolveRelative(current, specifier, relativePaths);
-      if (resolved !== null && !reachable.has(resolved)) {
-        queue.push(resolved);
+  const reachableByTest = new Map<string, ReadonlySet<string>>();
+  for (const testFile of testFiles) {
+    const fromTest = new Set<string>();
+    const queue = [testFile];
+    while (queue.length > 0) {
+      const current = queue.pop() as string;
+      if (fromTest.has(current)) {
+        continue;
+      }
+      fromTest.add(current);
+      reachable.add(current);
+      for (const specifier of relativeSpecifiers(contents.get(current) ?? "")) {
+        const resolved = resolveRelative(current, specifier, relativePaths);
+        if (resolved !== null && !fromTest.has(resolved)) {
+          queue.push(resolved);
+        }
       }
     }
+    reachableByTest.set(testFile, fromTest);
   }
-  return { testFiles, reachableFromTests: reachable };
+  return { testFiles, contents, reachableByTest, reachableFromTests: reachable };
+}
+
+function testTitles(source: string): readonly string[] {
+  return [...source.matchAll(/\b(?:test|it)\s*\(\s*(["'`])([^"'`]{1,200})\1/g)]
+    .map((match) => match[2] ?? "")
+    .filter((title) => title.length > 0)
+    .slice(0, 20);
 }
 
 const RELATIVE_SPECIFIER = /(?:require\s*\(\s*|from\s*|import\s*\(\s*|import\s*)(['"])(\.[^'"]*)\1/g;
@@ -326,24 +404,49 @@ export function exportedNames(source: string): readonly string[] {
 }
 
 /** `src/highlight.js` becomes `test/highlight.load.test.js`. */
-export function testPathFor(file: string): string {
+export function testPathFor(file: string, _framework: TestFramework = "node"): string {
   const base = file.split("/").pop() ?? file;
   const stem = base.replace(/\.[cm]?[jt]sx?$/, "");
-  return `test/${stem}.load.test.js`;
+  const extension = /\.[cm]?tsx?$/.test(file) ? "ts" : "js";
+  return `test/${stem}.load.test.${extension}`;
 }
 
 /**
  * A test that fails if the module cannot be loaded or its exports are not callable.
  *
- * Written against `node:test` because that is what the repository already uses; a
- * generated test that needed a framework the repository does not have would not run.
+ * Written against the repository's detected test framework. If no supported
+ * framework was detected, the caller refuses to create a test.
  */
-export function loadTest(file: string, exported: readonly string[], esm: boolean): string {
+export function loadTest(
+  file: string,
+  exported: readonly string[],
+  esm: boolean,
+  framework: TestFramework = "node",
+): string {
   const specifier = `../${file}`;
   const header = `// Added because ${file} was not reachable from any test, so a change that\n// stopped it loading would not have failed the suite.\n`;
-  const assertions = exported
-    .map((name) => `test("${name} is callable from ${file}", () => {\n  assert.equal(typeof module_.${name}, "function");\n});`)
-    .join("\n\n");
+  const assertions = exported.map((name) => {
+    if (framework === "node") {
+      return `test("${name} is callable from ${file}", () => {\n  assert.equal(typeof module_.${name}, "function");\n});`;
+    }
+    return `test("${name} is callable from ${file}", () => {\n  expect(typeof module_.${name}).toBe("function");\n});`;
+  }).join("\n\n");
+
+  if (framework === "vitest") {
+    return `${header}import { test, expect } from "vitest";\nimport * as module_ from "${specifier}";\n\n${assertions}\n`;
+  }
+  if (framework === "jest") {
+    return `${header}import * as module_ from "${specifier}";\n\n${assertions}\n`;
+  }
+  if (framework === "mocha") {
+    const mochaAssertions = exported
+      .map((name) => `it("${name} is callable from ${file}", () => {\n  assert.equal(typeof module_.${name}, "function");\n});`)
+      .join("\n\n");
+    if (esm) {
+      return `${header}import assert from "node:assert/strict";\nimport * as module_ from "${specifier}";\n\n${mochaAssertions}\n`;
+    }
+    return `${header}const assert = require("node:assert/strict");\nconst module_ = require("${specifier}");\n\n${mochaAssertions}\n`;
+  }
 
   if (esm) {
     return `${header}import test from "node:test";\nimport assert from "node:assert/strict";\nimport * as module_ from "${specifier}";\n\n${assertions}\n`;

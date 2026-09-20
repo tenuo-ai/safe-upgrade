@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertSafeScriptName } from "../src/packages.ts";
+import { assertSafeScriptName, updateArgs } from "../src/packages.ts";
 import { screenScript } from "../src/screen.ts";
 
 describe("script names", () => {
@@ -12,6 +12,14 @@ describe("script names", () => {
   it("rejects anything that could reach a shell", () => {
     for (const name of ["test && curl evil.sh", "test; rm -rf /", "$(id)", "test|tee /tmp/x", "../escape"]) {
       expect(() => assertSafeScriptName(name)).toThrow();
+    }
+  });
+});
+
+describe("dependency updates", () => {
+  it("suppresses lifecycle scripts for every supported manager", () => {
+    for (const manager of ["npm", "pnpm", "yarn"] as const) {
+      expect(updateArgs(manager, "example@2.0.0"), manager).toContain("--ignore-scripts");
     }
   });
 });
