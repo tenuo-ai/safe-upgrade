@@ -13,7 +13,12 @@
 import { describe, expect, it } from "vitest";
 import { DecisionEngineError } from "@safe-upgrade/domain";
 import { JevDecisionEngine } from "@safe-upgrade/jev";
-import type { JevEngineOptions, RouteInput, TestCoverageInput } from "@safe-upgrade/jev";
+import type {
+  JevEngineOptions,
+  ProseBreakInput,
+  RouteInput,
+  TestCoverageInput,
+} from "@safe-upgrade/jev";
 
 // Taken from the adapter's own options rather than imported from the SDK: these tests are
 // about the adapter, and nothing here should need the package it wraps.
@@ -190,6 +195,65 @@ describe("assessing whether tests cover a break", () => {
     expect(decision.rationale).toContain("0.42");
     expect(decision.rationale).toContain("below the 0.70 threshold");
     expect(decision.rationale).toContain("1 candidate test");
+  });
+});
+
+describe("reading a release note against how the package is used", () => {
+  const prose: ProseBreakInput = {
+    packageName: "cookie",
+    currentVersion: "0.7.2",
+    targetVersion: "1.0.2",
+    excerpt: "**Breaking changes**\n- Adds `__esModule` marker, imports need to use `import { parse }`",
+    evidenceId: "release:jshttp/cookie@v1.0.0",
+    usage: { style: "require", members: ["serialize"], callSiteCount: 1 },
+  };
+
+  it("reads a probability at or above the threshold as affecting this usage", async () => {
+    const decision = await engine({ affected: { type: "noul", noul: 0.87 } }).assessProseBreak(prose);
+    expect(decision.affects).toBe(true);
+    expect(decision.confidence).toBeCloseTo(0.87);
+  });
+
+  it("reads one below the threshold as not affecting it", async () => {
+    expect((await engine({ affected: { type: "noul", noul: 0.61 } }).assessProseBreak(prose)).affects).toBe(
+      false,
+    );
+  });
+
+  it("echoes the document so a finding can cite what was read", async () => {
+    const decision = await engine({ affected: { type: "noul", noul: 0.9 } }).assessProseBreak(prose);
+    expect(decision.evidenceId).toBe("release:jshttp/cookie@v1.0.0");
+  });
+
+  it("refuses an answer that is not a yes or no", async () => {
+    await expect(
+      engine({ affected: { type: "choice", choice: "yes", confidence: 0.9 } }).assessProseBreak(prose),
+    ).rejects.toThrow(/expected a yes\/no for release prose/);
+  });
+
+  it("asks about this repository's usage rather than about the release in general", async () => {
+    // "Is this release breaking" is answered by the version number. The question worth a round
+    // trip is whether the break reaches a caller that does what this repository does.
+    const { client, calls } = stubClient({ affected: { type: "noul", noul: 0.9 } });
+    await new JevDecisionEngine({ client, yesThreshold: 0.7 }).assessProseBreak(prose);
+
+    const question = JSON.stringify(calls[0]?.questions);
+    expect(question).toContain("cookie.serialize");
+    expect(question).toContain("require");
+    expect(question).toContain("not about whether the release is breaking for someone else");
+  });
+
+  it("sends the published note and the package's own API, and no repository source", async () => {
+    // The excerpt is a public changelog and the member names are the package's published API, so
+    // the one question here whose input is prose still sends nothing private. The source line
+    // that matched the usage is deliberately not part of the input shape.
+    const { client, calls } = stubClient({ affected: { type: "noul", noul: 0.9 } });
+    await new JevDecisionEngine({ client, yesThreshold: 0.7 }).assessProseBreak(prose);
+
+    const sent = JSON.stringify(calls[0]?.state);
+    expect(sent).toContain("Breaking changes");
+    expect(sent).toContain("serialize");
+    expect(sent).not.toContain("lib/response.js");
   });
 });
 

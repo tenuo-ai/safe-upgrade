@@ -536,3 +536,50 @@ The same run exposed a message of our own making. The implementer's "nothing lef
 asserted that a failure it could not explain was therefore a change in behaviour — and said so for
 a run whose tests had been left in CommonJS, sending the reader to the release notes for something
 sitting in the diff. It now states what it knows and leaves the cause open.
+
+## The engine is asked one question about prose
+
+Section 10 keeps the decision engine's input free of anything a release note wrote, and the
+adapter's own contract said so. That rule bought a real property — nothing generated can become a
+finding, and a changelog cannot carry an instruction into a prompt — and it also excluded the only
+judgment that would have changed an outcome.
+
+Every run against a real repository ended in the same place. `cookie 0.7.2` to `1.0.2` is a major
+bump; no structural rule explained it; the release note sat in the evidence record and nothing read
+it; the run reported that a person should. Meanwhile the three questions the engine *was* asked
+turned out to be ones trusted code answers better. Routing is a choice among two or three actions
+whose order is a property of who may write which files, which is why the engine's one confident
+disagreement was wrong. Coverage and completeness were asked as probabilities over a file list, and
+both landed the same side of the threshold as the deterministic answer in every state tried.
+
+So one question now takes prose: whether a release note describes a break that reaches how this
+repository uses the package. Three things keep it bounded.
+
+The input is public. The excerpt is a published changelog, and the usage is described by the load
+style and by the package's own exported member names — not by the source line that matched. The
+repository's code does not cross the wire, so this question does not change what a run discloses.
+
+The answer is a number. `affects` and a confidence, never text. A finding's prose is composed here
+from the structural facts and a citation, as with every other engine answer.
+
+It may raise a concern and may not settle one. `affects: true` produces a finding, cited to the
+document and marked as needing a person. `affects: false` leaves the uncertainty exactly where it
+was, worded to say that a reading found nothing rather than that nothing changed. The asymmetry is
+the whole safety argument: if a `false` discharged the caution, a confident misreading of a
+changelog would be the one thing in this system able to turn a real break into a verified run.
+
+Two bugs only became visible once something read the field. The stored "release note" was the raw
+GitHub API response — ids, avatar URLs, upload templates — and the extract quoted into findings was
+sliced out of the middle of that JSON. And the note fetched was the target version's, so a run
+upgrading across a major read `1.0.2`'s patch note ("loosen cookie name/value validation") and never
+`1.0.0`'s, which is where the break is written down. Both had been wrong since the evidence record
+was added, and neither was noticed while the only consumer was a reviewer nobody had watched read it.
+
+With both fixed, the express fixture changes outcome. The `1.0.0` note says imports must use
+`import { parse, serialize }`, the engine puts the probability that this reaches a `require` of
+`cookie.serialize` at 0.87, and the run names `lib/response.js` and cites the release instead of
+reporting that nobody looked.
+
+The remaining limit is the note has to be retrievable. GitHub allows sixty unauthenticated requests
+an hour, and a run that exceeds it reports that no note was retrieved — which is true, and is not
+the same claim as no note existing.

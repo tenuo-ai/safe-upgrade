@@ -41,11 +41,40 @@ export interface DerivationInput {
   readonly shapeEvidenceIds: readonly string[];
   /** Evidence ids for any release prose that was retrieved. */
   readonly documentEvidenceIds: readonly string[];
+  /**
+   * The engine's reading of the release prose, when one was obtained.
+   *
+   * Absent means nobody read it, which is a different statement from "it was read and named
+   * nothing", and the two produce different text below. Derivation stays pure: the researcher
+   * asks the engine and calls this again with the answer.
+   */
+  readonly proseAssessment?: ProseAssessment;
+}
+
+export interface ProseAssessment {
+  readonly affects: boolean;
+  readonly confidence: number | null;
+  readonly evidenceId: string;
+  /**
+   * The version whose note was read, which is not always the target.
+   *
+   * An upgrade crossing a major reads the `x.0.0` note, because that is where the break is
+   * written down. Saying "the note for 1.0.2" while citing the one for 1.0.0 sends a reviewer to
+   * a document that does not contain what they were told it contains.
+   */
+  readonly documentVersion: string;
 }
 
 export interface Derivation {
   readonly findings: readonly MigrationFinding[];
   readonly uncertainty: readonly string[];
+  /**
+   * A major bump that no structural rule explains.
+   *
+   * True means the only remaining account of what broke is prose, which is the one question the
+   * decision engine can answer and these rules cannot.
+   */
+  readonly unexplainedMajorBump: boolean;
 }
 
 /**
@@ -147,6 +176,7 @@ export function deriveFindings(input: DerivationInput): Derivation {
       // guessing it would put an invented API into source that has to compile.
       requiredChange: `Replace every use of ${input.packageName}.${member}. ${describeCandidates(input.addedNames)}`,
       confidence: 1,
+      needsHuman: true,
     });
   }
 
@@ -156,22 +186,49 @@ export function deriveFindings(input: DerivationInput): Derivation {
     );
   }
 
-  if (isMajorBump(input.currentVersion, input.targetVersion) && !loadBreaks && byMember.size === 0) {
+  const unexplainedMajorBump =
+    isMajorBump(input.currentVersion, input.targetVersion) && !loadBreaks && byMember.size === 0;
+  if (unexplainedMajorBump) {
     // A major bump asserts a break somewhere. Finding none from structure means
     // the break is described in prose, which is exactly what these rules cannot
     // read.
     // Only said when nothing else explains the bump. A run that found an ESM break or a
     // removed export has an explanation, and adding "we might be in the dark" to it
     // would mean no upgrade could ever be verified, whatever was established.
+    const bump = `${input.packageName} ${input.currentVersion} to ${input.targetVersion} is a major bump, and no structural rule explains what it breaks.`;
     const sites =
       input.usages.length === 1
-        ? "the 1 call site found here was not assessed against it"
-        : `the ${String(input.usages.length)} call sites found here were not assessed against it`;
-    uncertainty.push(
-      input.surfaceRead
-        ? `${input.packageName} ${input.currentVersion} to ${input.targetVersion} is a major bump, and no structural rule explains what it breaks. Its exports were compared across both versions and this repository uses none that were removed, so whatever changed is a change in behaviour or in argument handling. That kind of change is described only in prose, which was not interpreted, so ${sites}.`
-        : `${input.packageName} ${input.currentVersion} to ${input.targetVersion} is a major bump, and no structural rule explains what it breaks. Its exports could not be compared across the two versions, so whatever changed was not observed here and is described only in prose, which was not interpreted, so ${sites}.`,
-    );
+        ? "the 1 call site found here"
+        : `the ${String(input.usages.length)} call sites found here`;
+
+    if (input.proseAssessment?.affects === true) {
+      // A finding rather than an uncertainty, because something was established: a reading of
+      // the published note says this release reaches how this repository calls the package. It
+      // is cited to the document and marked for a person, since no rule here can act on prose.
+      findings.push({
+        id: "prose-break-at-target",
+        releaseClaim: `${bump} The release note for ${input.proseAssessment.documentVersion} was read against how this repository uses it, and describes a change that reaches ${sites}.`,
+        evidenceIds: [input.proseAssessment.evidenceId, ...input.shapeEvidenceIds],
+        affectedSymbols: [input.packageName],
+        affectedFiles: unique(input.usages.map((usage) => usage.file)),
+        requiredChange: `Read the cited release note against ${sites} and decide what the change requires. This was a reading of prose, not a structural observation, so the note is the authority and the reading is a pointer to it.`,
+        confidence: input.proseAssessment.confidence ?? 0,
+        needsHuman: true,
+      });
+    } else if (input.proseAssessment?.affects === false) {
+      // The caution stays. A model reading a changelog and not finding this call site is a
+      // reading, not a proof, and letting it discharge the uncertainty would mean a confident
+      // misreading could carry a real break into a verified run.
+      uncertainty.push(
+        `${bump} The release note for ${input.proseAssessment.documentVersion} was read against ${sites} and nothing in it named them, which is a reading of prose rather than a demonstration that nothing changed.`,
+      );
+    } else {
+      uncertainty.push(
+        input.surfaceRead
+          ? `${bump} Its exports were compared across both versions and this repository uses none that were removed, so whatever changed is a change in behaviour or in argument handling. That kind of change is described only in prose, which was not interpreted, so ${sites} ${input.usages.length === 1 ? "was" : "were"} not assessed against it.`
+          : `${bump} Its exports could not be compared across the two versions, so whatever changed was not observed here and is described only in prose, which was not interpreted, so ${sites} ${input.usages.length === 1 ? "was" : "were"} not assessed against it.`,
+      );
+    }
   }
 
   if (input.documentEvidenceIds.length === 0) {
@@ -188,7 +245,7 @@ export function deriveFindings(input: DerivationInput): Derivation {
     }
   }
 
-  return { findings, uncertainty };
+  return { findings, uncertainty, unexplainedMajorBump };
 }
 
 function unique(values: readonly string[]): readonly string[] {

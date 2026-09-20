@@ -87,6 +87,28 @@ implementer may not write tests and migrating first leaves a package half in eac
 system. That ordering is now a constraint in eligibility rather than a preference in the
 fallback, so the choice is never offered. `docs/deviations.md` records what was measured.
 
+Measuring it also showed where the engine earns its place, and it was not routing. On the
+three questions the spec defined, the engine changed no outcome: it agreed with the
+deterministic order everywhere it was right, and coverage and completeness landed the same
+side of the threshold either way. What every real run stopped on was different — a major
+bump no structural rule explained, with a release note in the evidence record that nothing
+read.
+
+So the engine is now asked one question whose input is prose: whether a release note
+describes a break reaching how this repository uses the package. The excerpt is a published
+changelog and the usage is given as a load style and the package's own member names, so no
+repository source crosses the wire. The answer is a boolean and a confidence, never text.
+And it is allowed to raise a concern but not to settle one: a positive reading becomes a
+finding cited to the note and marked for a person, while a negative one leaves the
+uncertainty in place, worded as a reading that found nothing rather than a demonstration
+that nothing changed. A `false` that discharged the caution would be the one path in this
+system by which a confident misreading could carry a real break into a verified run.
+
+On the express fixture this changes the outcome. `cookie@1.0.0`'s note says imports must
+use `import { parse, serialize }`; the engine puts the probability that this reaches a
+`require` of `cookie.serialize` at 0.87; the run names `lib/response.js` and cites the
+release, where before it reported that nobody had looked.
+
 ## The shape of the security argument
 
 Three things carry the guarantee, and none of them depend on a model behaving.

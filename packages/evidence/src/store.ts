@@ -16,6 +16,7 @@ export type AuditEventType =
   | "route_decision"
   | "repository_inspected"
   | "research_completed"
+  | "prose_assessed"
   | "elevation_granted"
   | "elevation_refused"
   | "elevation_requested"

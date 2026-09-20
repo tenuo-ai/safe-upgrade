@@ -94,6 +94,15 @@ export interface MigrationFinding {
   /** Set when research concludes only a manifest and lockfile change is needed. */
   readonly noSourceChangeRequired?: boolean;
   /**
+   * Set when no rule in this system can discharge the finding.
+   *
+   * The implementer stops on one of these and reports it instead of attempting it. Without that,
+   * a finding nothing can address stays unresolved, the implementer stays eligible, and the run
+   * spends its attempts rewriting a lockfile — which is what happened before the first of these
+   * existed.
+   */
+  readonly needsHuman?: boolean;
+  /**
    * Set when the change this finding calls for reaches test files.
    *
    * The implementer may not write tests, so a finding like this one cannot be discharged by a

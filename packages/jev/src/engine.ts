@@ -29,6 +29,8 @@ import type {
   DecisionEngine,
   MigrationCompletenessDecision,
   MigrationCompletenessInput,
+  ProseBreakDecision,
+  ProseBreakInput,
   RouteChoice,
   RouteInput,
   TestCoverageDecision,
@@ -133,6 +135,53 @@ export class JevDecisionEngine implements DecisionEngine {
       // Composed here rather than asked for. What the engine produced is a number; this
       // sentence says what the number was about, which is what an audit record needs.
       rationale: `the engine put the probability that one of the ${count(input.candidateTests.length, "candidate test")} would fail without the change at ${answer.noul.toFixed(2)}, ${sufficient ? "at or above" : "below"} the ${this.yesThreshold.toFixed(2)} threshold for treating coverage as sufficient`,
+    };
+  }
+
+  /**
+   * Whether a release note describes a break that reaches how this repository uses the package.
+   *
+   * The one question here whose input is prose, and the reason is that every real run ended at
+   * the same sentence: a major bump that no structural rule explains, with a release note sitting
+   * in the evidence record that nothing read. Comparing a paragraph against a call pattern is not
+   * something a rule does, and it is the only question in this contract where the engine knows
+   * something the rest of the system cannot compute.
+   *
+   * Asked about the usage rather than about the package. "Is this a breaking release" has an
+   * answer the version number already gave; "does this break reach a caller that does *this*" is
+   * the question whose answer changes what a person has to look at.
+   */
+  async assessProseBreak(input: ProseBreakInput): Promise<ProseBreakDecision> {
+    const members =
+      input.usage.members.length === 0
+        ? "the module's default export"
+        : input.usage.members.map((member) => `${input.packageName}.${member}`).join(", ");
+
+    const answer = await this.ask(
+      "affected",
+      {
+        packageName: input.packageName,
+        fromVersion: input.currentVersion,
+        toVersion: input.targetVersion,
+        releaseNote: input.excerpt,
+        loadedWith: input.usage.style,
+        usesMembers: members,
+        callSiteCount: input.usage.callSiteCount,
+      },
+      {
+        affected: noul(
+          `Does this release note describe a change that would alter the behaviour of code loading ${input.packageName} with ${input.usage.style} and using ${members}? Answer about this usage, not about whether the release is breaking for someone else.`,
+        ),
+      },
+    );
+    if (answer.type !== "noul") {
+      throw new DecisionEngineError(`expected a yes/no for release prose and got ${answer.type}`);
+    }
+
+    return {
+      affects: answer.noul >= this.yesThreshold,
+      confidence: answer.noul,
+      evidenceId: input.evidenceId,
     };
   }
 

@@ -36,9 +36,7 @@ export function createImplementer(context: RunContext): WorkerFn {
     // compile. Reported once, with the places to look, rather than attempted — otherwise
     // the finding stays unresolved, this worker stays eligible, and the run spends its
     // attempts rewriting the lockfile.
-    const unfixable = input.state.findings.filter((finding) =>
-      finding.id.startsWith("export-removed-at-target:"),
-    );
+    const unfixable = input.state.findings.filter((finding) => finding.needsHuman === true);
     if (unfixable.length > 0) {
       return { blockingConditions: unfixable.map(describeUnfixable) };
     }
@@ -93,7 +91,10 @@ function nothingPending(input: WorkerInput): boolean {
  */
 function describeUnfixable(finding: MigrationFinding): string {
   const where = finding.affectedFiles.join(", ") || "no file this scan could see";
-  return `${finding.releaseClaim} No mechanical rule can make that substitution, so this needs a person. Affected: ${where}. ${finding.requiredChange}`;
+  // Deliberately not "no rule can make that substitution": that sentence was written when a
+  // removed export was the only finding nothing could fix, and it reads as nonsense against one
+  // that came from reading a paragraph.
+  return `${finding.releaseClaim} No rule here can discharge it, so this needs a person. Affected: ${where}. ${finding.requiredChange}`;
 }
 
 /**

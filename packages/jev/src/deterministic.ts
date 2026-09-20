@@ -21,6 +21,8 @@ import type {
   RouteChoice,
   RouteInput,
   TestCoverageDecision,
+  ProseBreakDecision,
+  ProseBreakInput,
   TestCoverageInput,
 } from "./contract.ts";
 
@@ -38,6 +40,17 @@ export class DeterministicEngine implements DecisionEngine {
   async assessMigrationCompleteness(
     _input: MigrationCompletenessInput,
   ): Promise<MigrationCompletenessDecision> {
+    throw new DecisionEngineError(REASON);
+  }
+
+  /**
+   * Refused rather than answered `false`.
+   *
+   * There is no deterministic reading of a paragraph, and answering `false` would be indexed by
+   * the caller as "the note was read and named nothing", which is a different statement from
+   * "nobody read it". The caller keeps the second one.
+   */
+  async assessProseBreak(_input: ProseBreakInput): Promise<ProseBreakDecision> {
     throw new DecisionEngineError(REASON);
   }
 }

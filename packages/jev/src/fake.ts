@@ -13,6 +13,8 @@ import type {
   DecisionEngine,
   MigrationCompletenessDecision,
   MigrationCompletenessInput,
+  ProseBreakDecision,
+  ProseBreakInput,
   RouteChoice,
   RouteInput,
   TestCoverageDecision,
@@ -36,6 +38,7 @@ export interface FakeDecisionEngineOptions {
   readonly defaultConfidence?: number;
   readonly coverage?: (input: TestCoverageInput) => TestCoverageDecision;
   readonly completeness?: (input: MigrationCompletenessInput) => MigrationCompletenessDecision;
+  readonly prose?: (input: ProseBreakInput) => ProseBreakDecision;
 }
 
 export class FakeDecisionEngine implements DecisionEngine {
@@ -105,5 +108,16 @@ export class FakeDecisionEngine implements DecisionEngine {
       confidence: this.defaultConfidence,
       unaddressedFindingIds: input.findings.map((finding) => finding.id),
     };
+  }
+
+  /**
+   * Answers `false` by default, so a test that does not care about release prose gets the
+   * behaviour of a run where the note named nothing rather than one where a break was invented.
+   */
+  async assessProseBreak(input: ProseBreakInput): Promise<ProseBreakDecision> {
+    if (this.options.prose !== undefined) {
+      return this.options.prose(input);
+    }
+    return { affects: false, confidence: this.defaultConfidence, evidenceId: input.evidenceId };
   }
 }

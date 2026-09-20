@@ -1,4 +1,7 @@
 export type {
+  ProseBreakDecision,
+  ProseBreakInput,
+  ProseUsage,
   DecisionEngine,
   MigrationCompletenessDecision,
   MigrationCompletenessInput,
