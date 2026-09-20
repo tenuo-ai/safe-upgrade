@@ -119,6 +119,16 @@ function contexts(options: RuntimeOptions): {
 }
 
 /**
+ * Long enough for an install, a build, and a couple of verification rounds.
+ *
+ * There is no revocation path here: a leaked session stays usable until it
+ * expires, so the TTL is the whole containment story and the run is expected to
+ * re-issue rather than hold a longer one. Callers that genuinely need more can
+ * pass `parentTtlSeconds`, and should record why.
+ */
+const DEFAULT_PARENT_TTL_SECONDS = 1_800;
+
+/**
  * Fixture and test runtime. Mints its own root, which `@tenuo/core` permits only
  * when NODE_ENV is development or test.
  */
@@ -129,7 +139,7 @@ export function createDevAuthorizationRuntime(options: RuntimeOptions): Authoriz
   // worker could ever be delegated is visible in one object.
   const parentSession = tenuo.session({
     allow: capabilityCeilings(ceilingContext),
-    ttlSeconds: options.parentTtlSeconds ?? 3_600,
+    ttlSeconds: options.parentTtlSeconds ?? DEFAULT_PARENT_TTL_SECONDS,
   });
   return assemble(tenuo, parentSession, options, ceilingContext, toolContext);
 }

@@ -16,6 +16,7 @@
 
 import { join } from "node:path";
 import { exact, max, oneOf, pattern, under, type ConstraintExpr } from "@tenuo/core";
+import { semver, urlSafe } from "./constraints.ts";
 import type {
   BranchArgs,
   CreateDraftPrArgs,
@@ -148,9 +149,14 @@ export function capabilityCeilings(context: CeilingContext): Ceilings {
 
     read_registry_metadata: {
       packageName: exact(context.requestedPackage),
-      version: anyText(),
+      // A version, not a path segment smuggled into the registry URL.
+      version: semver(),
     },
-    fetch_release_document: { url: anyText() },
+    // The only network capability, so the host allowlist and the SSRF blocking
+    // belong here rather than only in the tool body.
+    fetch_release_document: {
+      url: urlSafe({ allowDomains: context.releaseHosts, schemes: ["https"] }),
+    },
 
     read_git_status: {},
     read_git_diff: { pathspec: anyText() },

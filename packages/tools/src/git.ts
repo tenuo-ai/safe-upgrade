@@ -59,7 +59,7 @@ export function createGitTools(context: ToolContext): {
     readGitStatus: defineTool<EmptyArgs, GitStatus>(
       context,
       "read_git_status",
-      "Report worktree cleanliness, current branch, and HEAD.",
+      "Report worktree cleanliness, current branch, and HEAD. Takes no arguments.",
       async () => {
         const porcelain = await git(["status", "--porcelain=v1", "--untracked-files=all"]);
         const entries = porcelain.split("\n").filter((line) => line.trim().length > 0);
@@ -70,6 +70,9 @@ export function createGitTools(context: ToolContext): {
           entries,
         };
       },
+      // An empty capability ceiling cannot be closed-world, so this tool has to
+      // refuse unexpected arguments itself.
+      { expectedArguments: [] },
     ),
 
     readGitDiff: defineTool<ReadGitDiffArgs, string>(

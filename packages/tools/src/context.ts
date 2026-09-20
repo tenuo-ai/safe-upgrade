@@ -1,3 +1,4 @@
+import { ToolExecutionError } from "@safe-upgrade/domain";
 import type { PackageManager } from "@safe-upgrade/domain";
 import type { PathContext } from "./paths.ts";
 
@@ -57,13 +58,39 @@ export function defineTool<A extends Record<string, unknown>, R>(
   name: string,
   description: string,
   body: (args: A) => Promise<R>,
+  options: { readonly expectedArguments?: readonly string[] } = {},
 ): RawTool<A, R> {
+  const expected = options.expectedArguments;
   return {
     name,
     description,
     execute: async (args: A): Promise<R> => {
+      if (expected !== undefined) {
+        assertOnlyExpectedArguments(name, args, expected);
+      }
       context.onInvoke?.(name, args);
       return body(args);
     },
   };
+}
+
+/**
+ * Reject argument names the tool does not declare.
+ *
+ * A capability whose ceiling names at least one argument is closed-world: tenuo
+ * denies anything unnamed. A capability with an empty ceiling is not, because
+ * there is no argument to compare against, so an unexpected key reaches the tool
+ * body unchecked. Zero-argument tools therefore have to close that themselves.
+ */
+function assertOnlyExpectedArguments(
+  name: string,
+  args: Record<string, unknown>,
+  expected: readonly string[],
+): void {
+  const unexpected = Object.keys(args).filter((key) => !expected.includes(key));
+  if (unexpected.length > 0) {
+    throw new ToolExecutionError(
+      `${name} does not accept ${unexpected.sort().join(", ")}`,
+    );
+  }
 }

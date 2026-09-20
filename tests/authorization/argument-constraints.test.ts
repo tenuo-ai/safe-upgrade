@@ -159,6 +159,21 @@ describe("git and GitHub constraints", () => {
   });
 });
 
+describe("network constraints", () => {
+  it("denies a version argument carrying a path segment", async () => {
+    const { broker, toolset } = harness.runtime;
+    await expect(
+      broker.withWorker("researcher", "research", (handle) =>
+        handle.invoke("read_registry_metadata", toolset.read_registry_metadata, {
+          packageName: "left-pad",
+          version: "../../../etc/passwd",
+        }),
+      ),
+    ).rejects.toBeInstanceOf(AuthorizationError);
+    expect(harness.invocations).toEqual([]);
+  });
+});
+
 describe("zero-trust argument naming", () => {
   it("denies an argument the capability does not name", async () => {
     const { broker, toolset } = harness.runtime;
@@ -171,6 +186,25 @@ describe("zero-trust argument naming", () => {
         } as Parameters<typeof toolset.read_file.execute>[0]),
       ),
     ).rejects.toBeInstanceOf(AuthorizationError);
+    expect(harness.invocations).toEqual([]);
+  });
+
+  /**
+   * `read_git_status` has an empty ceiling, and an empty ceiling cannot be
+   * closed-world: there is no named argument for Tenuo to compare against, so an
+   * extra key is passed through rather than denied. The tool closes the gap, and
+   * this test is what keeps it closed.
+   */
+  it("refuses a smuggled argument to a zero-argument tool", async () => {
+    const { broker, toolset } = harness.runtime;
+    await expect(
+      broker.withWorker("inspector", "inspect", (handle) =>
+        handle.invoke("read_git_status", toolset.read_git_status, {
+          pathspec: "../../etc/passwd",
+        } as Parameters<typeof toolset.read_git_status.execute>[0]),
+      ),
+    ).rejects.toBeInstanceOf(ToolExecutionError);
+    // Tenuo let it through, so the tool is the layer that has to reject it.
     expect(harness.invocations).toEqual([]);
   });
 });
