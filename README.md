@@ -21,7 +21,7 @@ Implemented so far:
 | `@safe-upgrade/evidence` | Content hashing, secret redaction, append-only audit log |
 | `@safe-upgrade/tools` | Path safety, file, process, package, release, git, and GitHub tools |
 | `@safe-upgrade/authorization` | Capability ceilings, worker profiles, session registry, delegation broker |
-| `@safe-upgrade/jev` | Decision engine contract, response validation, deterministic fallback, offline engine |
+| `@safe-upgrade/jev` | Decision engine contract, response validation, deterministic fallback, offline engine, Jev adapter |
 | `@safe-upgrade/graph` | LangGraph state machine, transition allowlist, eligibility predicates, router |
 | `@safe-upgrade/bootstrap` | Worktree isolation and repository detection, both trusted code |
 | `@safe-upgrade/workers` | All seven: inspector, researcher, test author, implementer, CI author, verifier, publisher |

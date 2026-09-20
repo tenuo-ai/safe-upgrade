@@ -59,7 +59,15 @@ export interface RepositoryFacts {
   readonly workspaceRoots: readonly string[];
   readonly manifests: readonly string[];
   readonly lockfile: string;
+  /**
+   * The exact version installed today, resolved from the lockfile.
+   *
+   * Every question research asks is about the difference between two concrete versions, and a
+   * range cannot be compared, fetched, or classified as a major bump.
+   */
   readonly currentVersion: string;
+  /** What the manifest permits, which is usually a range and is what the edit replaces. */
+  readonly declaredRange: string;
   readonly verificationCommands: readonly CommandSpec[];
   readonly existingCiFiles: readonly string[];
 }

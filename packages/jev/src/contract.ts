@@ -36,6 +36,14 @@ export interface RouteInput {
   readonly eligibleActions: readonly RouteCandidate[];
   readonly unresolvedFindings: readonly UnresolvedFinding[];
   readonly baselinePassed: boolean;
+  /**
+   * Whether the dependency is already at the target version.
+   *
+   * Not in the spec's field list, and added because without it neither the engine nor the
+   * fallback can tell "the change has not been made yet" from "the change is done and
+   * something else is next". Every other field describes work *around* the upgrade.
+   */
+  readonly dependencyMoved: boolean;
   readonly implementationChanged: boolean;
   readonly testsChanged: boolean;
   readonly ciSufficient: boolean;

@@ -63,6 +63,7 @@ export function buildRouteInput(
       hasVerification: verified.has(finding.id),
     })),
     baselinePassed: baselinePassed(state),
+    dependencyMoved: state.dependencyMoved,
     implementationChanged: implementationChanged(state),
     testsChanged: testsChanged(state),
     ciSufficient: state.ciAssessment?.sufficient ?? false,

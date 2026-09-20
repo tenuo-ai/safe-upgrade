@@ -12,8 +12,14 @@ import type { CheckPurpose, CheckResult, EvidenceLink, FinalResult, RunStatus } 
 export interface ClassificationInput {
   /** Baseline ran to completion, so we know the repository's starting state. */
   readonly baselineKnown: boolean;
-  /** A required baseline check failed before we touched anything. */
-  readonly baselineRequiredFailure: boolean;
+  /**
+   * Required checks that were already failing before anything was touched.
+   *
+   * Named rather than counted, because "a required baseline check failed" sends a reader to
+   * hunt through artifacts for which one, and the answer is usually that the repository does
+   * not build in this environment at all.
+   */
+  readonly failedBaselinePurposes: readonly CheckPurpose[];
   /** Installed version matches the exact requested target. */
   readonly targetVersionResolved: boolean;
   readonly findingIds: readonly string[];
@@ -125,8 +131,12 @@ export function classifyRun(input: ClassificationInput): FinalResult {
   // but it can never reach `verified`: there is no way to tell our change's
   // effect apart from a failure that was already there.
   let capAtPartial = false;
-  if (input.baselineRequiredFailure) {
-    reasons.push("a required baseline check failed before any change was made");
+  if (input.failedBaselinePurposes.length > 0) {
+    reasons.push(
+      `the repository's own ${joinNames(input.failedBaselinePurposes)} ${
+        input.failedBaselinePurposes.length === 1 ? "check was" : "checks were"
+      } already failing before anything was changed, so no later result can be attributed to this upgrade`,
+    );
     if (!input.partialAllowed) {
       return decide("blocked");
     }
@@ -215,4 +225,15 @@ export function classifyRun(input: ClassificationInput): FinalResult {
 /** `partial` results must never be presented as safe. */
 export function isSafeToPresentAsVerified(status: RunStatus): boolean {
   return status === "verified";
+}
+
+/** "test", "test and lint", "test, lint, and build". */
+function joinNames(names: readonly string[]): string {
+  if (names.length <= 1) {
+    return names[0] ?? "";
+  }
+  if (names.length === 2) {
+    return `${names[0]} and ${names[1]}`;
+  }
+  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
 }

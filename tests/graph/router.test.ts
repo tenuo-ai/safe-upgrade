@@ -54,6 +54,9 @@ function stateWithChoices(overrides: Partial<UpgradeState> = {}): UpgradeState {
     activeSessionRef: null,
     addressedFindingIds: [],
     verifiedFindingIds: [],
+    // Already at the target, so these cases exercise the order among the actions that come
+    // after the move rather than the move itself, which outranks all of them.
+    dependencyMoved: true,
     targetVersionResolved: false,
     diffPolicyPassed: true,
     lastVerification: "not_run",
@@ -147,6 +150,7 @@ describe("candidate construction", () => {
       "baselinePassed",
       "ciSufficient",
       "currentPhase",
+      "dependencyMoved",
       "eligibleActions",
       "implementationChanged",
       "lastVerification",
@@ -179,6 +183,35 @@ describe("engine responses", () => {
     expect(route.decision.fallbackReason).toContain("below the 0.6 threshold");
     // Spec order: covering a finding that has no verification path outranks
     // implementing it.
+    expect(route.decision.selected).toBe("author_tests");
+  });
+
+  it("moves the dependency rather than configuring CI for a change nobody made", async () => {
+    // The gap real repositories exposed: with `implement` gated on research having produced a
+    // finding, a clean upgrade — which is most upgrades — routed straight past the manifest,
+    // wrote a workflow, and finished with a patch that changed no version at all.
+    const engine = new FakeDecisionEngine();
+    const route = await decideRoute(stateWithChoices({ dependencyMoved: false, findings: [] }), {
+      engine,
+      config,
+      audit,
+    });
+
+    expect(route.decision.selected).toBe("implement");
+    expect(route.worker).toBe(ACTION_WORKER.implement);
+  });
+
+  it("still covers an unverified finding before moving anything", async () => {
+    // The move outranks CI and verification, not coverage. The implementer migrates source in
+    // the same visit that it moves the dependency, so going first would convert the source
+    // while the tests still load it the old way and fail a round that was always going to.
+    const engine = new FakeDecisionEngine();
+    const route = await decideRoute(stateWithChoices({ dependencyMoved: false }), {
+      engine,
+      config,
+      audit,
+    });
+
     expect(route.decision.selected).toBe("author_tests");
   });
 

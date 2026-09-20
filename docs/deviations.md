@@ -371,3 +371,70 @@ classes from escaping, and bounding what crosses the wire — but it measures no
 how the real model scores these particular questions. The confidence threshold and the
 yes/no threshold are therefore set from first principles rather than from observation, and
 should be revisited once there is a run against the service to observe.
+
+## What real repositories changed about this design
+
+Four gaps only appeared when the tool was pointed at `express`, `chalk`, `debug`, `execa`, and
+`cookie` rather than at fixtures. Each one had been invisible because the fixtures were written
+alongside the code that reads them.
+
+**A manifest range is not a version.** Every fixture pinned its dependencies exactly, so
+`currentVersion` was read straight from `package.json` and happened to be a concrete version.
+Real repositories declare `^2.1.3`, which cannot be fetched from a registry, compared against a
+target, or classified as a major bump — and the run died on an authorization denial, because the
+capability that reads registry metadata requires an exact version and was doing its job. The
+lockfile now decides, and a lockfile that does not answer stops the run rather than being
+guessed at.
+
+**The dependency move was conditional on findings.** `implement` was ineligible unless research
+had produced a finding, on the reasoning that there was no migration work to do. But the move is
+the change the run exists to make; findings only describe extra work on top of it. An upgrade
+whose research came back clean — which is most upgrades — went through the whole graph, wrote a
+CI workflow, and finished with a patch that changed no version at all. The move is now
+unconditional, and sits just below covering an unverified finding in the fallback order: above,
+because a workflow that claims to gate a change nobody made is describing nothing; below,
+because the implementer migrates source in the same visit, and doing that before the tests are
+converted fails a round that was always going to fail.
+
+**Nothing checked which direction the version moved.** Asked to take `ansi-styles` from 6.2.3 to
+6.2.1, a run rewrote the manifest, installed the older version, and reported on it as an
+upgrade. Every check in this system can pass on a downgrade. A no-op upgrade behaved the same
+way, producing a workflow and a draft pull request for a change that did not happen.
+
+**A repository can forbid the lockfile this run depends on.** `package-lock=false` in `.npmrc`
+is a common choice, and `express`, `chalk`, and `execa` all make it. Under it, the dependency
+move updates `package.json` while npm silently leaves the lockfile alone, and the frozen install
+fails several minutes later complaining about integrity hashes rather than about configuration.
+Detection now refuses up front and says which setting is the problem.
+
+## Screening a script by its first word was not caution
+
+The original screen accepted a script as a check only if its first token was one of five
+executables and it contained no `&&`, `|`, `$`, or `rm`. The reasoning was that an unrecognised
+command should not be run.
+
+It does not hold up. `run_check` passes a script *name* to the package manager, never a body,
+and the manager runs that body through a shell of its own — so the screen could not prevent
+shell interpretation, and rejecting `&&` bought nothing. What it did instead was reject
+`mocha ...`, `eslint .`, `jest --coverage`, and `npm run a && npm run b`, which is to say most of
+what real repositories write. `express`, `chalk`, `debug`, and `execa` each ran with no gates at
+all. A run with no gate cannot detect a regression, which makes refusing to look the least safe
+outcome available rather than the most cautious one.
+
+Running a repository's tests means running its code, and that is inherent to verifying an
+upgrade. It is bounded by a disposable worktree, no shell from this process, an environment
+allowlist that carries no credentials, a timeout, and a killed process tree. What remains for a
+screen is the answerable question: does the script plainly do something whose effect outlives
+the worktree? Publishing, deploying, uploading, reaching another host, removing a path outside
+the tree, and backgrounding a process that nothing will wait for are all visible in the text and
+are refused, with the reason reaching the report.
+
+## The probe gets a home directory of its own
+
+`read_package_exports` deliberately executes third-party code, and the default child environment
+handed it the real `HOME` — which is where `~/.npmrc`, `~/.gitconfig`, `~/.ssh`, and cloud
+credential files live. A package that read one of those on load could have printed it into
+output this run captures and writes to disk. Both processes that touch the published package now
+get the scratch directory as their home, which is deleted with everything else in it. The cost
+is a cold npm cache for that install and no access to a private registry configured in the
+user's `.npmrc`; reading a published version's export list needs neither.

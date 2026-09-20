@@ -17,6 +17,7 @@ import { renderReport, runUpgrade, type RunOptions, type RunReport } from "@safe
 import { parseArguments, UsageError, wantsHelp, wantsVersion, type ParsedArguments } from "./arguments.ts";
 import { chooseAuthorization } from "./authorization.ts";
 import { DeterministicEngine, JevDecisionEngine } from "@safe-upgrade/jev";
+import { PackageResolutionError, RepositoryError } from "@safe-upgrade/domain";
 import { HELP, VERSION } from "./help.ts";
 
 export interface Streams {
@@ -33,6 +34,7 @@ export interface Streams {
  */
 export const EXIT: Readonly<Record<RunStatus, number>> & {
   readonly usage: number;
+  readonly unusable: number;
   readonly internal: number;
 } = {
   verified: 0,
@@ -41,6 +43,10 @@ export const EXIT: Readonly<Record<RunStatus, number>> & {
   blocked: 4,
   indeterminate: 5,
   usage: 64,
+  // The repository cannot be run against: no lockfile, the package is not a dependency, a
+  // version that cannot be resolved. Separate from 70 because it is not a defect in this tool
+  // and there is something the caller can do about it.
+  unusable: 65,
   internal: 70,
 };
 
@@ -87,6 +93,10 @@ export async function main(argv: readonly string[], streams: Streams): Promise<n
   } catch (error) {
     // A run that could not start is not a verdict on the upgrade, so it does not borrow one
     // of the status codes.
+    if (isPrecondition(error)) {
+      streams.err(`safe-upgrade: this repository cannot be upgraded by this run: ${messageOf(error)}\n`);
+      return EXIT.unusable;
+    }
     streams.err(`safe-upgrade: the run could not complete: ${messageOf(error)}\n`);
     return EXIT.internal;
   }
@@ -176,6 +186,17 @@ function buildEngine(parsed: ParsedArguments, streams: Streams) {
     );
   }
   return new JevDecisionEngine();
+}
+
+/**
+ * Whether the repository, rather than this tool, is why the run did not start.
+ *
+ * The distinction is the whole point of a separate code: a missing lockfile is something the
+ * caller fixes in a minute, and reporting it as an internal error sends them to read a stack
+ * trace looking for a bug that is not there.
+ */
+function isPrecondition(error: unknown): boolean {
+  return error instanceof PackageResolutionError || error instanceof RepositoryError;
 }
 
 function messageOf(error: unknown): string {

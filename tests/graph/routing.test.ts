@@ -48,6 +48,7 @@ describe("test sufficiency", () => {
           fileChanges: [
             { path: "src/index.ts", beforeHash: null, afterHash: null, owner: "implementer", reason: "migrate read() to parse()" },
           ],
+          dependencyMoved: true,
           targetVersionResolved: true,
         }),
         verifier: async () => ({
@@ -64,7 +65,12 @@ describe("test sufficiency", () => {
     expect(status).toBe("verified");
   });
 
-  it("runs the test author before the implementer when coverage is missing", async () => {
+  it("covers a finding before the visit that moves and migrates it", () => {
+    // Two things are ordered here. The dependency move outranks everything, because work
+    // described around a change that has not been made is work about nothing. After that, a
+    // finding with no verification path is covered before it is migrated, so that the test
+    // proving the migration was needed exists before the migration hides the evidence.
+    let implementCalls = 0;
     harness = createGraphHarness({
       workers: {
         inspector: async () => ({ baselineChecks: [check("test", "passed")] }),
@@ -76,13 +82,18 @@ describe("test sufficiency", () => {
             { path: "src/migration.test.ts", beforeHash: null, afterHash: null, owner: "test_author", reason: "cover f1" },
           ],
         }),
-        implementer: async () => ({
-          addressedFindingIds: ["f1"],
-          fileChanges: [
-            { path: "src/index.ts", beforeHash: null, afterHash: null, owner: "implementer", reason: "migrate f1" },
-          ],
-          targetVersionResolved: true,
-        }),
+        implementer: async () => {
+          implementCalls += 1;
+          return {
+            dependencyMoved: true,
+            addressedFindingIds: ["f1"],
+            fileChanges: [
+              { path: "pnpm-lock.yaml", beforeHash: null, afterHash: null, owner: "implementer" as const, reason: "moved to left-pad 1.3.0" },
+              { path: "src/index.ts", beforeHash: null, afterHash: null, owner: "implementer" as const, reason: "migrate f1" },
+            ],
+            targetVersionResolved: true,
+          };
+        },
         verifier: async () => ({
           postChangeChecks: [check("install", "passed"), check("test", "passed"), check("typecheck", "passed")],
           lastVerification: "passed",
@@ -90,13 +101,15 @@ describe("test sufficiency", () => {
         }),
       },
     });
-    const { status } = await harness.run();
-
-    const testAuthorAt = harness.visited.indexOf("test_author");
-    const implementerAt = harness.visited.indexOf("implementer");
-    expect(testAuthorAt).toBeGreaterThanOrEqual(0);
-    expect(testAuthorAt).toBeLessThan(implementerAt);
-    expect(status).toBe("verified");
+    return harness.run().then(({ status }) => {
+      expect(harness.visited.indexOf("test_author")).toBeLessThan(
+        harness.visited.indexOf("implementer"),
+      );
+      // One implementer visit: it moves the dependency and migrates in the same pass, which is
+      // why the coverage has to come first rather than in between.
+      expect(implementCalls).toBe(1);
+      expect(status).toBe("verified");
+    });
   });
 });
 
@@ -112,6 +125,7 @@ describe("failure recovery", () => {
           fileChanges: [
             { path: "src/index.ts", beforeHash: null, afterHash: null, owner: "implementer", reason: "migrate f1" },
           ],
+          dependencyMoved: true,
           targetVersionResolved: true,
         }),
         verifier: async () => {
@@ -150,6 +164,7 @@ describe("failure recovery", () => {
           fileChanges: [
             { path: "src/index.ts", beforeHash: null, afterHash: null, owner: "implementer", reason: "migrate f1" },
           ],
+          dependencyMoved: true,
           targetVersionResolved: true,
         }),
         verifier: async () => ({
@@ -200,6 +215,7 @@ describe("approval gate", () => {
           fileChanges: [
             { path: "src/index.ts", beforeHash: null, afterHash: null, owner: "implementer", reason: "migrate f1" },
           ],
+          dependencyMoved: true,
           targetVersionResolved: true,
         }),
         verifier: async () => ({
@@ -234,6 +250,7 @@ describe("evidence gaps", () => {
           fileChanges: [
             { path: "src/index.ts", beforeHash: null, afterHash: null, owner: "implementer", reason: "migrate f1" },
           ],
+          dependencyMoved: true,
           targetVersionResolved: true,
         }),
         verifier: async () => ({

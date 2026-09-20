@@ -130,6 +130,7 @@ export function createSurfaceTools(context: ToolContext): {
               timeoutMs: context.limits.commandTimeoutMs,
             },
             context.limits,
+            isolatedHome(scratch),
           );
           if (install.exitCode !== 0) {
             return unreadable(`installing ${args.packageName}@${args.version} failed`);
@@ -147,6 +148,7 @@ export function createSurfaceTools(context: ToolContext): {
               timeoutMs: Math.min(context.limits.commandTimeoutMs, 60_000),
             } satisfies CommandSpec,
             context.limits,
+            isolatedHome(scratch),
           );
           if (probe.exitCode !== 0) {
             return unreadable(`loading ${args.packageName}@${args.version} failed`);
@@ -201,6 +203,28 @@ function parseProbe(
 }
 
 /** Names present at `from` and absent at `to`. Empty when either could not be read. */
+/**
+ * A home directory of its own for the two processes that touch the published package.
+ *
+ * This is the one place in the system that deliberately executes third-party code, and the
+ * default environment would have handed it the real `HOME`. That is where `~/.npmrc`,
+ * `~/.gitconfig`, `~/.ssh`, and cloud credential files live, and a package that read one of
+ * them on load could print it straight into output this run captures and writes to disk. The
+ * scratch directory is removed with everything else in it when the probe finishes.
+ *
+ * The cost is a cold npm cache for this install, and that a private registry configured in the
+ * user's `.npmrc` is not consulted. Both are acceptable: a published version's export list
+ * should come from the public registry, and nothing about reading it needs a credential.
+ */
+function isolatedHome(scratch: string): Readonly<Record<string, string>> {
+  return {
+    HOME: scratch,
+    // Windows resolves `~` through this one instead.
+    USERPROFILE: scratch,
+    npm_config_cache: join(scratch, ".npm"),
+  };
+}
+
 export function removedNames(from: PackageExports, to: PackageExports): readonly string[] {
   if (!from.observed || !to.observed) {
     return [];

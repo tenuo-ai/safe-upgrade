@@ -63,3 +63,6 @@ export {
   elevationRequest,
   grantFor,
 } from "./elevation.ts";
+
+export type { VersionRelation } from "./version.ts";
+export { relateVersions } from "./version.ts";

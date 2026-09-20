@@ -25,7 +25,7 @@ export type {
   RunCheckArgs,
   UpdateDependencyArgs,
 } from "./packages.ts";
-export { assertSafeScriptName, createPackageTools, isScriptBodyRunnable } from "./packages.ts";
+export { assertSafeScriptName, createPackageTools, } from "./packages.ts";
 
 export type {
   FetchReleaseDocumentArgs,
@@ -61,3 +61,5 @@ export {
 } from "./manifest.ts";
 export { addedNames, createSurfaceTools, removedNames } from "./surface.ts";
 export type { PackageExports, ReadPackageExportsArgs } from "./surface.ts";
+
+export { isScriptBodyRunnable, screenScript } from "./screen.ts";

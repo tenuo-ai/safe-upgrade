@@ -162,8 +162,9 @@ export function createGitTools(context: ToolContext): {
         }
 
         await git([
-          // An identity, because the run's git environment is isolated from the user's
-          // config and a commit with no `user.email` fails outright.
+          // An identity supplied per command rather than read from configuration. A commit
+          // with no `user.email` fails outright, and inheriting the user's identity would
+          // attribute an automated commit to a person who did not make it.
           "-c",
           "user.name=safe-upgrade",
           "-c",

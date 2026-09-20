@@ -124,6 +124,14 @@ export const UpgradeStateAnnotation = Annotation.Root({
 
   addressedFindingIds: union(),
   verifiedFindingIds: union(),
+  /**
+   * Set by the implementer once the manifest and lockfile name the target version.
+   *
+   * Explicit state rather than something inferred from the recorded file changes: inferring it
+   * from a change's reason text makes two modules agree on a phrase, and the day one of them
+   * words it differently the dependency move looks undone and the graph routes to it forever.
+   */
+  dependencyMoved: replace<boolean>(() => false),
   targetVersionResolved: replace<boolean>(() => false),
   diffPolicyPassed: replace<boolean>(() => true),
   lastVerification: replace<"not_run" | "passed" | "failed">(() => "not_run"),

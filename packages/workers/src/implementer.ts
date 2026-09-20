@@ -43,12 +43,35 @@ export function createImplementer(context: RunContext): WorkerFn {
       return { blockingConditions: unfixable.map(describeUnfixable) };
     }
 
+    // Nothing left to try.
+    //
+    // The dependency is already at the target, every finding with a rule behind it has been
+    // addressed, and verification still failed. There is no further move this worker can make,
+    // and the router will keep offering it while the last verification is a failure — which on
+    // a real repository meant three identical failing test rounds before the attempt budget ran
+    // out. One clear answer is worth more than three attempts at the same no-op.
+    if (input.state.dependencyMoved && input.state.lastVerification === "failed" && nothingPending(input)) {
+      return {
+        blockingConditions: [
+          `${context.request.packageName} is at ${context.request.targetVersion} and the checks still fail. No rule here explains the failure, so it is a change in behaviour rather than one in the package's shape, and that needs a person reading the release notes against the failing output.`,
+        ],
+      };
+    }
+
     const esmFinding = input.state.findings.find((finding) => finding.id === "esm-only-at-target");
     if (esmFinding === undefined) {
       return moveDependencyOnly(input, context);
     }
     return migrateToEsm(input, context, esmFinding);
   };
+}
+
+/** Whether any finding is still waiting on a change this worker knows how to make. */
+function nothingPending(input: WorkerInput): boolean {
+  const addressed = new Set(input.state.addressedFindingIds);
+  return input.state.findings.every(
+    (finding) => finding.noSourceChangeRequired === true || addressed.has(finding.id),
+  );
 }
 
 /**
@@ -81,6 +104,7 @@ async function moveDependencyOnly(
     };
   }
   return {
+    dependencyMoved: true,
     addressedFindingIds: input.state.findings
       .filter((finding) => finding.noSourceChangeRequired === true)
       .map((finding) => finding.id),
@@ -213,6 +237,7 @@ async function migrateToEsm(
   });
 
   return {
+    dependencyMoved: true,
     fileChanges: changes,
     addressedFindingIds: [finding.id],
     // Test files are call sites this worker is not allowed to touch. Saying so

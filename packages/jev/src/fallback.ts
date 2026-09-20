@@ -43,6 +43,20 @@ function preferenceOrder(input: RouteInput): readonly { action: RoutableAction; 
     });
   }
 
+  if (!input.dependencyMoved) {
+    // Below covering a finding and above everything else.
+    //
+    // Above, because a workflow or a verification that describes a change nobody has made yet
+    // is describing nothing. Below, because the implementer migrates source in the same visit
+    // that it moves the dependency, and doing that before the tests are converted leaves the
+    // repository half in one module system and fails a verification that was always going to
+    // fail. Putting the move first outright cost three implementer visits and a failed round.
+    preferences.push({
+      action: "implement",
+      reason: "the dependency is not yet at the target version",
+    });
+  }
+
   if (input.unresolvedFindings.length > 0) {
     preferences.push({
       action: "implement",

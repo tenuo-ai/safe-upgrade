@@ -14,15 +14,16 @@
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { basename, join, relative, sep } from "node:path";
 import { PackageResolutionError, RepositoryError } from "@safe-upgrade/domain";
+import { isExactVersion, resolveInstalledVersion } from "./installed.ts";
 import type {
   CheckPurpose,
   CommandSpec,
   PackageManager,
   RepositoryFacts,
 } from "@safe-upgrade/domain";
-import { assertSafeScriptName, isScriptBodyRunnable } from "@safe-upgrade/tools";
+import { assertSafeScriptName, screenScript } from "@safe-upgrade/tools";
 
 /** Lockfile to manager. The file present on disk is what the manager obeys. */
 const LOCKFILES: ReadonlyArray<readonly [string, PackageManager]> = [
@@ -73,8 +74,15 @@ export function detectRepositoryFacts(request: DetectionRequest): Detection {
   const { manager, lockfile } = detectPackageManager(root);
   const manifest = readManifest(join(root, "package.json"));
   assertManagerAgreement(manifest, manager, lockfile);
+  assertLockfileWritable(root, manager);
 
-  const currentVersion = resolveDeclaredVersion(manifest, request.packageName);
+  const declaredRange = resolveDeclaredVersion(manifest, request.packageName);
+  const currentVersion = resolveCurrentVersion(
+    manager,
+    join(root, lockfile),
+    request.packageName,
+    declaredRange,
+  );
   const workspaceRoots = detectWorkspaces(root, manager, manifest, warnings);
   const manifests = [
     "package.json",
@@ -91,6 +99,7 @@ export function detectRepositoryFacts(request: DetectionRequest): Detection {
     manifests,
     lockfile,
     currentVersion,
+    declaredRange,
     verificationCommands: [installCommand(manager, root, request.commandTimeoutMs), ...commands],
     existingCiFiles: detectCiFiles(root),
   };
@@ -111,7 +120,9 @@ function detectPackageManager(root: string): { manager: PackageManager; lockfile
   const present = LOCKFILES.filter(([file]) => existsSync(join(root, file)));
   if (present.length === 0) {
     throw new RepositoryError(
-      `no lockfile found in ${root}; a reproducible install needs one of ${LOCKFILES.map(([file]) => file).join(", ")}`,
+      // Not the path: detection runs inside a temporary worktree, and naming it sent readers
+      // looking for a directory that no longer exists instead of at their own repository.
+      `this repository has no lockfile, and a reproducible install needs one of ${LOCKFILES.map(([file]) => file).join(", ")}. Run an install and commit the result.`,
     );
   }
   if (present.length > 1) {
@@ -209,6 +220,73 @@ function assertManagerAgreement(manifest: Manifest, manager: PackageManager, loc
  * version. A range would make "the version we upgraded from" a matter of when
  * the install ran rather than what the repository says.
  */
+/**
+ * Refuse a repository that has told npm never to write a lockfile.
+ *
+ * `package-lock=false` in `.npmrc` is a common choice — `express`, `chalk`, and `execa` all
+ * make it — and it is incompatible with everything this run depends on. The dependency move
+ * updates `package.json` and npm silently leaves the lockfile alone, so the frozen install
+ * that follows fails with a complaint about the two being out of sync, several minutes into a
+ * run, with a message about integrity hashes rather than about configuration.
+ *
+ * Checked here instead, where it costs nothing and can be explained. This run will not write a
+ * lockfile the repository has asked not to have, and it will not verify against an install it
+ * cannot reproduce, so there is nothing left to do but say so.
+ */
+function assertLockfileWritable(root: string, manager: PackageManager): void {
+  if (manager !== "npm") {
+    return;
+  }
+  let content: string;
+  try {
+    content = readFileSync(join(root, ".npmrc"), "utf8");
+  } catch {
+    return;
+  }
+  for (const line of content.split("\n")) {
+    const text = line.trim();
+    if (text.startsWith("#") || text.startsWith(";")) {
+      continue;
+    }
+    const [key, value] = text.split("=", 2);
+    if (key?.trim() !== "package-lock") {
+      continue;
+    }
+    if (value?.trim() === "false") {
+      throw new RepositoryError(
+        "this repository's .npmrc sets package-lock=false, so npm will not record the dependency move in the lockfile and the frozen install this run verifies against cannot be reproduced. Remove that setting, or run against a checkout that keeps a lockfile.",
+      );
+    }
+  }
+}
+
+/**
+ * The version the repository has now.
+ *
+ * An exact specifier answers for itself. Anything else — a caret, a tilde, a range, a tag —
+ * is a statement about what would be acceptable, and only the lockfile knows which of those
+ * was chosen. A lockfile that does not answer stops the run: research compares two concrete
+ * versions, and inventing the first one would produce findings about code that is not here.
+ */
+function resolveCurrentVersion(
+  manager: PackageManager,
+  lockfilePath: string,
+  packageName: string,
+  declaredRange: string,
+): string {
+  if (isExactVersion(declaredRange)) {
+    return declaredRange;
+  }
+  const installed = resolveInstalledVersion(manager, lockfilePath, packageName);
+  if (installed === null) {
+    throw new PackageResolutionError(
+      `${packageName} is declared as '${declaredRange}', and ${basename(lockfilePath)} does not say which version that resolved to. ` +
+        `This run compares two exact versions, so it will not guess the first one. Reinstall to refresh the lockfile, or pin ${packageName} to an exact version.`,
+    );
+  }
+  return installed;
+}
+
 function resolveDeclaredVersion(manifest: Manifest, packageName: string): string {
   const sources: ReadonlyArray<readonly [string, Readonly<Record<string, unknown>>]> = [
     ["dependencies", manifest.dependencies],
@@ -361,10 +439,11 @@ function planChecks(
       absent.push(purpose);
       continue;
     }
-    if (!isScriptBodyRunnable(body)) {
-      warnings.push(
-        `script '${name}' is not in a form this run will execute, so ${purpose} has no gate`,
-      );
+    const refusal = screenScript(body);
+    if (refusal !== null) {
+      // The reason travels into the report. "Not in a form this run will execute" told a
+      // reader nothing about which part of their script was the problem.
+      warnings.push(`script '${name}' will not be used as a gate because ${refusal}`);
       absent.push(purpose);
       continue;
     }

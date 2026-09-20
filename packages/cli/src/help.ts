@@ -49,6 +49,8 @@ Exit codes
   4   blocked
   5   indeterminate
   64  the command line could not be understood
+  65  the repository cannot be upgraded by this run — no lockfile, the package is
+      not a direct dependency, or its installed version cannot be determined
   70  the run could not complete
 
 Examples

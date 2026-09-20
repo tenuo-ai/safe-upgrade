@@ -158,12 +158,14 @@ export function deriveFindings(input: DerivationInput): Derivation {
     // Only said when nothing else explains the bump. A run that found an ESM break or a
     // removed export has an explanation, and adding "we might be in the dark" to it
     // would mean no upgrade could ever be verified, whatever was established.
+    const sites =
+      input.usages.length === 1
+        ? "the 1 call site found here was not assessed against it"
+        : `the ${String(input.usages.length)} call sites found here were not assessed against it`;
     uncertainty.push(
-      `${input.packageName} ${input.currentVersion} to ${input.targetVersion} is a major bump, and no structural rule explains what it breaks. ${
-        input.surfaceRead
-          ? "Its exports were compared across both versions and this repository uses none that were removed, so whatever changed is a change in behaviour or in arguments"
-          : "Its exports could not be compared, and whatever changed"
-      } is described in prose that was not interpreted, so the ${String(input.usages.length)} call site(s) found were not assessed against it.`,
+      input.surfaceRead
+        ? `${input.packageName} ${input.currentVersion} to ${input.targetVersion} is a major bump, and no structural rule explains what it breaks. Its exports were compared across both versions and this repository uses none that were removed, so whatever changed is a change in behaviour or in argument handling. That kind of change is described only in prose, which was not interpreted, so ${sites}.`
+        : `${input.packageName} ${input.currentVersion} to ${input.targetVersion} is a major bump, and no structural rule explains what it breaks. Its exports could not be compared across the two versions, so whatever changed was not observed here and is described only in prose, which was not interpreted, so ${sites}.`,
     );
   }
 

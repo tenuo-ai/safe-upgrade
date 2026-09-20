@@ -272,13 +272,13 @@ export function createNodes(dependencies: NodeDependencies): Readonly<Record<Pha
       const requiredChecks = latestChecksByPurpose(state.postChangeChecks).filter((check) =>
         requiredPurposes.includes(check.command.purpose),
       );
-      const baselineRequiredFailure = latestChecksByPurpose(state.baselineChecks).some(
-        (check) => requiredPurposes.includes(check.command.purpose) && check.outcome !== "passed",
-      );
+      const failedBaselinePurposes = latestChecksByPurpose(state.baselineChecks)
+        .filter((check) => requiredPurposes.includes(check.command.purpose) && check.outcome !== "passed")
+        .map((check) => check.command.purpose);
 
       const result = classifyRun({
         baselineKnown: state.baselineChecks.length > 0,
-        baselineRequiredFailure,
+        failedBaselinePurposes,
         targetVersionResolved: state.targetVersionResolved,
         findingIds: state.findings.map((finding) => finding.id),
         addressedFindingIds: state.addressedFindingIds,

@@ -122,42 +122,57 @@ describe("resolving the requested package", () => {
   });
 });
 
-describe("scripts the run will not execute", () => {
+describe("scripts the run will use as a gate", () => {
   /**
-   * A script that is present but not in a runnable form is reported absent. The
-   * alternative is executing a line we cannot vouch for because it happened to be
-   * called `test`.
+   * The screen asks whether a script does something whose effect outlives the worktree, not
+   * whether its first word is one this project recognises. An earlier version asked the
+   * latter, and the result was that `express`, `debug`, `chalk`, and `execa` each ran with no
+   * gates at all: every one of their test scripts was refused for using `&&` or a runner not
+   * on a five-name list. A run with no gate cannot detect a regression, which makes refusing
+   * to look the least safe outcome available rather than the most cautious one.
    */
-  const refused = [
-    ["a pipe", "node --test | tee results.log"],
-    ["command chaining", "node --test && curl https://example.com/ping"],
-    ["a subshell", "node --test $(cat .target)"],
-    ["an executable outside the allowlist", "jest --coverage"],
-    ["a destructive command", "rm -rf dist && node --test"],
-    ["a backgrounded command", "node --test & node other.js"],
+  const accepted = [
+    ["a real mocha invocation", "mocha --require test/support/env --reporter spec test/"],
+    ["a runner nobody enumerated", "jest --coverage"],
+    ["a chain of steps", "npm run test:node && npm run test:browser"],
+    ["housekeeping inside the tree", "rm -rf dist && node --test"],
+    ["output redirection", "node --test | tee results.log"],
   ] as const;
 
-  for (const [label, body] of refused) {
-    it(`treats a test script using ${label} as absent`, () => {
+  for (const [label, body] of accepted) {
+    it(`keeps a test script using ${label}`, () => {
+      repo = createFixtureRepo();
+      patchManifest({ scripts: { test: body, build: "node scripts/build.mjs" } });
+      const { absentChecks, checkScripts, warnings, facts } = detect();
+
+      expect(absentChecks).not.toContain("test");
+      expect(checkScripts.test).toBe("test");
+      expect(warnings.join(" ")).not.toMatch(/gate/);
+      expect(facts.verificationCommands.map((command) => command.purpose)).toContain("test");
+    });
+  }
+
+  const refused = [
+    ["reaching the network itself", "node --test && curl https://example.com/ping", /network/],
+    ["publishing", "npm publish", /publishes/],
+    ["deploying", "vercel --prod", /deploys/],
+    ["removing something outside the tree", "rm -rf ~/.cache && node --test", /outside/],
+    ["backgrounding", "node --test & node other.js", /outlive/],
+  ] as const;
+
+  for (const [label, body, reason] of refused) {
+    it(`refuses a test script ${label}`, () => {
       repo = createFixtureRepo();
       patchManifest({ scripts: { test: body, build: "node scripts/build.mjs" } });
       const { absentChecks, checkScripts, warnings, facts } = detect();
 
       expect(absentChecks).toContain("test");
       expect(checkScripts.test).toBeUndefined();
-      expect(warnings.join(" ")).toMatch(/test has no gate/);
-      // And it never becomes a command the run would run.
+      // The reason reaches the reader, rather than "not in a form this run will execute".
+      expect(warnings.join(" ")).toMatch(reason);
       expect(facts.verificationCommands.map((command) => command.purpose)).not.toContain("test");
     });
   }
-
-  it("keeps a script whose body is a plain allowlisted command", () => {
-    repo = createFixtureRepo();
-    patchManifest({ scripts: { test: "node --test", typecheck: "node scripts/check.mjs" } });
-    const { checkScripts, warnings } = detect();
-    expect(checkScripts).toEqual({ test: "test", typecheck: "typecheck" });
-    expect(warnings).toEqual([]);
-  });
 
   it("treats an empty script body as absent", () => {
     repo = createFixtureRepo();

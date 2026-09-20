@@ -72,10 +72,17 @@ const RULES: readonly Rule[] = [
   {
     action: "implement",
     evaluate: (state) => {
-      // Ineligible until research produced a cited finding, or concluded that no
-      // source change is required.
-      if (state.findings.length === 0) {
-        return null;
+      // The dependency move comes first and does not wait for a finding to justify it.
+      //
+      // This rule used to be ineligible whenever research produced nothing, on the reasoning
+      // that there was no migration work to do. But moving the dependency *is* the change
+      // this run exists to make, and findings only describe extra work on top of it. With the
+      // old rule, an upgrade whose research came back clean — which is most upgrades — went
+      // all the way through routing, wrote a CI workflow, and finished without ever touching
+      // the manifest. Real repositories showed this plainly: the patch contained a workflow
+      // and no version change at all.
+      if (!state.dependencyMoved) {
+        return "the dependency has not been moved to the target version yet";
       }
       const unresolved = unresolvedFindings(state);
       if (unresolved.length > 0) {

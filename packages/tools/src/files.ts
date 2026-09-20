@@ -10,7 +10,7 @@
  * correct response is to replan rather than overwrite.
  */
 
-import { openSync, closeSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { openSync, closeSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { ToolExecutionError } from "@safe-upgrade/domain";
 import { sha256Hex } from "@safe-upgrade/evidence";
@@ -188,6 +188,11 @@ export function createFileTools(context: ToolContext): {
         }
 
         if (existing === null) {
+          // The directory may not exist yet. A repository with no `.github/workflows` is
+          // ordinary, and the path has already been resolved inside the worktree and checked
+          // against this tool's file class, so the only thing missing is the directory itself.
+          // Without this the run died on a raw ENOENT naming a temporary worktree.
+          mkdirSync(dirname(resolved.absolute), { recursive: true });
           // Create the file exclusively first so a symlink planted between the
           // resolve above and the write cannot be followed.
           closeSync(openSync(resolved.absolute, "wx", 0o600));

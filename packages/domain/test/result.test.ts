@@ -17,7 +17,7 @@ function check(purpose: CheckResult["command"]["purpose"], outcome: CheckResult[
 
 const verifiable: ClassificationInput = {
   baselineKnown: true,
-  baselineRequiredFailure: false,
+  failedBaselinePurposes: [],
   targetVersionResolved: true,
   findingIds: ["f1"],
   addressedFindingIds: ["f1"],
@@ -109,13 +109,13 @@ describe("classifyRun", () => {
   });
 
   it("blocks on a failing required baseline unless the run permits a partial result", () => {
-    expect(classifyRun({ ...verifiable, baselineRequiredFailure: true, partialAllowed: false }).status).toBe(
+    expect(classifyRun({ ...verifiable, failedBaselinePurposes: ["test"], partialAllowed: false }).status).toBe(
       "blocked",
     );
   });
 
   it("caps a run that started from a failing baseline at partial, never verified", () => {
-    const result = classifyRun({ ...verifiable, baselineRequiredFailure: true, partialAllowed: true });
+    const result = classifyRun({ ...verifiable, failedBaselinePurposes: ["test", "lint"], partialAllowed: true });
     expect(result.status).toBe("partial");
     expect(result.unverifiedClaims.join(" ")).toContain("passing baseline");
   });

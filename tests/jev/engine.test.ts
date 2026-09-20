@@ -53,6 +53,7 @@ const routeInput: RouteInput = {
   ],
   unresolvedFindings: [{ id: "esm-only-at-target", summary: "require() throws", affectedFileCount: 2, hasVerification: false }],
   baselinePassed: true,
+  dependencyMoved: true,
   implementationChanged: false,
   testsChanged: false,
   ciSufficient: true,

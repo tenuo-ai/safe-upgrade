@@ -20,6 +20,8 @@ import {
   describeElevation,
   grantFor,
   parseOrThrow,
+  PackageResolutionError,
+  relateVersions,
   upgradeRequestSchema,
   type CheckPurpose,
   type ElevationGrant,
@@ -91,6 +93,33 @@ export interface RunOptions {
   readonly clock?: () => Date;
 }
 
+/**
+ * Stop unless the target is actually ahead of what is installed.
+ *
+ * Every check in this system can pass on a downgrade, and the report would have described one
+ * as an upgrade. A no-op is worth stopping for too: there is nothing to verify, and a run that
+ * produces a CI workflow and a draft pull request for a version change that did not happen is
+ * worse than one that says so in a sentence.
+ */
+function assertMovesForward(current: string, target: string, packageName: string): void {
+  switch (relateVersions(current, target)) {
+    case "ahead":
+      return;
+    case "same":
+      throw new PackageResolutionError(
+        `${packageName} is already at ${target}, so there is nothing for this run to upgrade`,
+      );
+    case "behind":
+      throw new PackageResolutionError(
+        `${packageName} is at ${current}, and ${target} is older. This run only moves a dependency forward: every check it performs can pass on a downgrade, so it would report one as a successful upgrade.`,
+      );
+    case "unordered":
+      throw new PackageResolutionError(
+        `${packageName} ${current} and ${target} differ only by a prerelease or build tag, and this run does not order those against each other. Name a version whose major, minor, or patch number is higher.`,
+      );
+  }
+}
+
 export interface ProductionAuthorization {
   /** Name of the variable holding the trusted issuer's hex public key. */
   readonly rootPublicKeyEnv: string;
@@ -140,6 +169,8 @@ export async function runUpgrade(options: RunOptions): Promise<RunReport> {
       packageName: options.packageName,
       commandTimeoutMs: 10 * 60_000,
     });
+
+    assertMovesForward(detection.facts.currentVersion, options.targetVersion, options.packageName);
 
     // Validated here rather than trusted from the caller: the graph validates
     // again at the first node, but the ceilings below are built from these values.
@@ -273,7 +304,11 @@ export function renderReport(report: RunReport): string {
     "",
     `**Result:** ${result.status}`,
     "",
-    `- Package: \`${report.request.packageName}\` ${facts.currentVersion} to ${report.request.targetVersion}`,
+    // The declared range is shown when it differs, because "^2.1.3 to 1.0.2" reads as the
+    // upgrade someone asked for while 2.1.3 is the version this run actually compared against.
+    `- Package: \`${report.request.packageName}\` ${facts.currentVersion}${
+      facts.declaredRange === facts.currentVersion ? "" : ` (declared \`${facts.declaredRange}\`)`
+    } to ${report.request.targetVersion}`,
     `- Repository: ${facts.worktreePath} at ${report.startCommit}`,
     `- Package manager: ${facts.packageManager} (${facts.lockfile})`,
     `- Source checkout clean at start: ${String(report.sourceClean)}`,

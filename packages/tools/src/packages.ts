@@ -22,6 +22,11 @@ import { defineTool, type RawTool, type ToolContext } from "./context.ts";
 import { assertNoShellSyntax, runProcess, type RunOutcome } from "./process.ts";
 
 /** The only executables this system will ever spawn. */
+/**
+ * What this process is willing to spawn itself. Only the package manager and the two tools the
+ * run drives directly; a repository's own scripts are reached through the manager, never from
+ * here, and are screened separately in `screen.ts`.
+ */
 const EXECUTABLE_ALLOWLIST: ReadonlySet<string> = new Set(["npm", "pnpm", "yarn", "node", "git"]);
 
 const SCRIPT_NAME = /^[a-z0-9][a-z0-9:._-]{0,63}$/i;
@@ -83,20 +88,6 @@ export function assertSafeScriptName(script: string): void {
     throw new ToolExecutionError(`script name is not a plain identifier: ${script}`);
   }
 }
-
-/**
- * Reject a script body we are unwilling to run indirectly. Used when deciding
- * whether a repository's own script is usable as a verification command.
- */
-export function isScriptBodyRunnable(body: string): boolean {
-  if (SHELL_CONTROL.test(body)) {
-    return false;
-  }
-  const [executable] = body.trim().split(/\s+/);
-  return executable !== undefined && EXECUTABLE_ALLOWLIST.has(executable);
-}
-
-const SHELL_CONTROL = /(\|\||&&|[;|&<>`$]|\$\(|\brm\b|\bcurl\b|\bwget\b)/;
 
 function workspaceArgs(manager: PackageManager, workspace: string): string[] {
   if (workspace.length === 0) {
