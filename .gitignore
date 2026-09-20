@@ -8,3 +8,7 @@ coverage/
 # The template carries variable names only, never values.
 !.env.example
 .DS_Store
+
+# Local strategy notes. Not for the upstream repo.
+docs/strategy.md
+internal/

@@ -1,206 +1,163 @@
 # safe-upgrade
 
-A service and CLI that prepares a single TypeScript dependency upgrade and can
-actually show its work: which release notes it read, which code it changed, which
-tests prove the change, and which claims it could not establish.
+Upgrade one exact dependency in a JavaScript or TypeScript repository, and
+establish what that did. The run isolates a worktree, reads the two published
+versions, changes only what it can justify, verifies from a frozen install, and
+says so when it cannot finish.
 
-LangGraph coordinates the workflow. Jev picks the next eligible specialist and
-answers bounded semantic questions. Tenuo gives each specialist a different,
-narrower set of capabilities. Deterministic code does the authorizing, the file
-and process work, and the final verdict.
+It does not merge. It does not publish. A version that is a range or a tag is
+refused: every claim is about one version whose manifest it read.
 
-The full engineering specification is in [`docs/spec.md`](docs/spec.md).
+The CLI is not on npm yet. Run it from this checkout.
 
-## Status
+## Requirements
 
-Implemented so far:
-
-| Package | What it does |
-| --- | --- |
-| `@safe-upgrade/domain` | Closed unions, Zod validation, typed errors, deterministic result classification |
-| `@safe-upgrade/evidence` | Content hashing, secret redaction, append-only audit log |
-| `@safe-upgrade/tools` | Path safety, file, process, package, release, git, and GitHub tools |
-| `@safe-upgrade/authorization` | Capability ceilings, worker profiles, session registry, delegation broker |
-| `@safe-upgrade/jev` | Decision engine contract, response validation, deterministic fallback, offline engine, Jev adapter |
-| `@safe-upgrade/graph` | LangGraph state machine, transition allowlist, eligibility predicates, router |
-| `@safe-upgrade/bootstrap` | Worktree isolation and repository detection, both trusted code |
-| `@safe-upgrade/workers` | All seven: inspector, researcher, test author, implementer, CI author, verifier, publisher |
-| `@safe-upgrade/runner` | Assembles a run and writes the evidence |
-
-A run works end to end today against `fixtures/legacy-app`, which is pinned to
-`escape-string-regexp` 4 and upgraded to 5. Nothing is mocked: a real worktree, a
-real `npm ci`, the registry over the network, the repository's own scripts as child
-processes, every tool call authorized, and a classified result with its evidence on
-disk.
-
-What the run works out for itself is worth stating, because none of it is
-configured. From the two published manifests it derives that 5.0.0 is ESM-only and
-that `require()` of it will throw, and cites the documents it read. It finds both
-call sites in the repository's source. It notices that one of them has no test at
-all and writes one. It converts the package to ESM, refusing any file it cannot
-convert in full. Then it verifies from a clean frozen install.
-
-The first run of that upgrade stops at `human_required`, because the migration needs
-`package.json`'s `type` field set and no worker holds that capability by default. It
-reports what it wants approved, by id, and changes nothing while it waits. Approving
-that id and re-running completes the migration and verifies it. See
-[capability elevation](#capabilities-a-human-has-to-approve).
-
-The fixture's own workflow runs the tests and never the build, on purpose: a
-dependency that breaks at build time would reach main behind a green tick. The run
-notices, and adds a workflow that runs the checks it was verified against, on a Node
-version that satisfies the floor the upgraded package states. It adds a file rather
-than editing `ci.yml`, because a step accidentally dropped from an existing workflow
-removes a gate while leaving the tick.
-
-With that, the approved run reaches `verified` and states the five conditions that
-earned it. `--draft-pr` then commits the run branch, pushes it, and opens a draft
-pull request. It cannot merge, cannot mark a draft ready, and cannot push any
-branch but its own. Elevation — a capability no worker holds — still stops the run
-and asks a person; a clean lockfile bump does not.
-
-A Dependabot pull request is assessed in place. `--from-event` reads a bump from the
-Actions event — including a workspace path (`in /packages/app`) and grouped
-`Updates \`pkg\` from x to y` lines — and comments the verdict on that pull request,
-including when the run is `blocked` or `human_required`. See
-`examples/dependabot-assess.yml`.
-
-A monorepo is in scope. `packages/*` is expanded onto directories that already have
-a `package.json`. `--workspace` and `--companion name@version` name where and what
-else this run may move. `--allow-transitive` is now a real gate: without it, an extra
-lockfile version change stops the run rather than shipping as a side effect.
-
-A second fixture, `fixtures/prefix-tool`, covers the harder shape: a break that no
-manifest announces. It is pinned to `postcss` 7 and upgraded to 8, and both versions
-publish as CommonJS with the same entry point — the difference is that
-`postcss.vendor` exists in 7 and does not in 8. The run finds that by installing both
-versions and comparing what they export, then finds which of the repository's files
-reach the missing name and which do not.
-
-It then refuses to fix it unless the release note and the new surface agree on a
-rename — old name gone, new name present, note saying one became the other. A set
-difference alone cannot tell a rename from a removal, so `postcss.vendor` stays
-`blocked`, naming the symbol, the file, and the names the target added as somewhere
-to look. That is the point of the fixture: its test suite *passes* at the target
-version, because the only covered call site is one that survives, so a run that
-trusted a green suite would have reported success on code that does not build.
-
-The Jev adapter is in place behind the decision-engine contract, and `--engine jev`
-selects it with `TYPESAFE_API_KEY` from the environment. The default is still the
-deterministic priority order, which is a supported configuration rather than a
-placeholder — the route is then a pure function of graph state.
-
-It has been run against the live service. The engine is confident on these questions, with
-a median reported confidence of 0.97 across ten routing states, and it contributes real
-choices rather than sitting below the threshold. Its one systematic disagreement with the
-deterministic order was instructive enough to change the design: it preferred migrating a
-break before covering it, which no amount of confidence makes correct, because the
-implementer may not write tests and migrating first leaves a package half in each module
-system. That ordering is now a constraint in eligibility rather than a preference in the
-fallback, so the choice is never offered. `docs/deviations.md` records what was measured.
-
-Measuring it also showed where the engine earns its place, and it was not routing. On the
-three questions the spec defined, the engine changed no outcome: it agreed with the
-deterministic order everywhere it was right, and coverage and completeness landed the same
-side of the threshold either way. What every real run stopped on was different — a major
-bump no structural rule explained, with a release note in the evidence record that nothing
-read.
-
-So the engine is now asked one question whose input is prose: whether a release note
-describes a break reaching how this repository uses the package. The excerpt is a published
-changelog and the usage is given as a load style and the package's own member names, so no
-repository source crosses the wire. The answer is a boolean and a confidence, never text.
-And it is allowed to raise a concern but not to settle one: a positive reading becomes a
-finding cited to the note and marked for a person, while a negative one leaves the
-uncertainty in place, worded as a reading that found nothing rather than a demonstration
-that nothing changed. A `false` that discharged the caution would be the one path in this
-system by which a confident misreading could carry a real break into a verified run.
-
-On the express fixture this changes the outcome. `cookie@1.0.0`'s note says imports must
-use `import { parse, serialize }`; the engine puts the probability that this reaches a
-`require` of `cookie.serialize` at 0.87; the run names `lib/response.js` and cites the
-release, where before it reported that nobody had looked.
-
-## The shape of the security argument
-
-Three things carry the guarantee, and none of them depend on a model behaving.
-
-**Capabilities differ per worker, and a tool reference is not authority.** Every
-worker receives the same object graph of protected tools. What differs is the
-session it runs under. The test author can call `write_source_file` — it just gets
-denied, before the function body runs.
-
-**Every argument is named in a policy.** Tenuo runs a capability in zero-trust
-mode once its ceiling is non-empty: an argument the policy does not mention is a
-denial rather than a silent pass. The ceilings are typed against each tool's
-argument record, so forgetting one is a build error instead of a surprise at run
-time.
-
-**Narrowing is one-directional.** A child session is derived from the parent with
-`narrow()`, which refuses to add a capability the parent lacks. The parent holds
-exactly the union of the ceilings, so the maximum authority of the whole run is
-one object you can read.
-
-<h3 id="capabilities-a-human-has-to-approve">Capabilities a human has to approve</h3>
-
-Some writes belong to an upgrade and are still too consequential to hand a worker by
-default. Setting `package.json`'s `type` is the case that forced the question: it is
-exactly what a CommonJS-to-ESM upgrade needs, and it changes how every file in the
-package loads. Letting `write_source_file` accept manifests would have been the easy
-answer and the wrong one, since a worker able to write that file can give itself a
-`postinstall` script and a `test` script that always passes.
-
-So the capability exists in the run's ceiling, in no worker's standing profile, and a
-worker that needs it records a request and stops. Four properties do the work:
-
-- **The approval names the call, not the capability.** A request carries the worker,
-  the capability, and the exact argument values; the grant carries only a digest of
-  those. Approving `type: "module"` cannot be replayed as `type: "commonjs"`, cannot
-  be pointed at another manifest, and cannot be handed to another worker.
-- **The approval becomes the constraint.** The broker narrows the ceiling's own
-  constraints with an `exact()` per approved argument, so the session permits
-  precisely the approved call. An approval for something outside the ceiling produces
-  a chain Tenuo refuses to build, which is recorded as a refusal rather than crashing
-  the run.
-- **Asking and answering are separate.** The request comes from a worker and lives in
-  graph state; the grant is run configuration from outside. Nothing a worker returns
-  can approve anything.
-- **The request outlives the run.** Its arguments are worktree-relative, so an
-  approval still means something after the temporary worktree it referred to is gone.
-
-`tests/authorization/elevation.test.ts` asserts the negative cases, which are the
-ones that matter: an approval that could be moved between workers or nudged to a
-neighbouring value would be worse than no approval at all, because the audit trail
-would claim a human agreed to something they did not.
-
-**The decision engine chooses, but it doesn't authorizes.** The router computes the
-eligible actions deterministically, the engine picks one from that exact list, the
-response is validated against the same list, and trusted code maps the chosen
-action to a worker. An engine that returns an action nobody offered is rejected
-rather than retried, and a low-confidence answer is replaced by a fixed priority
-order. There is no wording that gets `publish_draft` offered before verification
-passed, and no response that supplies a worker identity.
-
-A few consequences:
-
-- No profile can enable dependency lifecycle scripts. That is a human decision,
-  and the run reports `human_required` instead of granting it.
-- The verifier holds no write capability, so it cannot influence what it verifies.
-- `create_draft_pr` pins `draft` to `true` in the capability, not in a code path.
-- Sessions live in an in-memory registry that throws if anything tries to
-  serialize it, which is what keeps warrants out of LangGraph checkpoints.
-
-## Working on it
+- Node 22.18 or newer (the binary loads TypeScript sources)
+- A git repository with exactly one of `package-lock.json`, `pnpm-lock.yaml`, or `yarn.lock`
+- The package is a direct dependency of the root or of one workspace
+- `NODE_ENV=development` for a local trial without a Tenuo warrant
 
 ```bash
+git clone https://github.com/tenuo-ai/safe-upgrade.git
+cd safe-upgrade
 pnpm install
-pnpm typecheck
-pnpm test
 ```
 
-Tests run against the real Tenuo WASM core, not a mock. `createTenuo.devRoot()`
-requires `NODE_ENV` to be `development` or `test`; the vitest config sets it.
+## Run an upgrade
 
-Production runs must import a warrant from a trusted issuer rather than minting
-their own root. Both paths are in `packages/authorization/src/tenuo.ts`, and the
-difference between them is the difference between a demo and a deployment.
+Name the package and an exact version. The repository is read, never written;
+work happens in a temporary worktree.
+
+```bash
+NODE_ENV=development pnpm safe-upgrade postcss@8.4.35 --repository ~/src/app
+```
+
+Progress goes to stderr. The report goes to stdout, so this stays pipeable:
+
+```bash
+NODE_ENV=development pnpm safe-upgrade postcss@8.4.35 --repository ~/src/app --format json --quiet > report.json
+```
+
+A record of the run lands in `artifacts/<run-id>` unless you pass `--artifacts`.
+
+### What you will see
+
+| Status | Exit | Meaning |
+| --- | --- | --- |
+| `verified` | 0 | The target is installed, the checks that already existed still pass, and every finding is accounted for. |
+| `partial` | 2 | Some of that is true. `--partial-allowed` makes this exit 0. |
+| `human_required` | 3 | A change needs a capability no worker holds. Re-run with `--approve`. |
+| `blocked` | 4 | The run will not make the change. The report names the symbol, the files, and what to look at. |
+| `indeterminate` | 5 | It could not classify the result. Treat it as unverified. |
+| *(usage)* | 64 | The command line could not be understood. |
+| *(unusable)* | 65 | This repository cannot be upgraded by this run — no lockfile, not a direct dependency, or the installed version cannot be determined. |
+| *(internal)* | 70 | The run could not complete. |
+
+## When a person has to approve
+
+Some upgrades need `package.json`'s `"type": "module"`. No worker holds that
+capability. The first run stops at `human_required`, writes nothing, and prints
+an approval id.
+
+```bash
+NODE_ENV=development pnpm safe-upgrade escape-string-regexp@5.0.0 \
+  --repository ~/src/app \
+  --approve 4f3c2b1a \
+  --approved-by alice
+```
+
+`--approved-by` is required. The approval names that exact call: it cannot be
+replayed as a different field, path, or worker.
+
+## Open a draft pull request
+
+If verification passes, `--draft-pr` pushes the run branch and opens a draft.
+It cannot merge, cannot mark the draft ready, and cannot push any other branch.
+`GITHUB_TOKEN` comes from the environment, never from a flag.
+
+```bash
+NODE_ENV=development pnpm safe-upgrade left-pad@1.3.0 \
+  --repository ~/src/app \
+  --draft-pr \
+  --github-repository acme/app
+```
+
+`--publish` is the same flag under the older name.
+
+## Assess a Dependabot pull request
+
+Checkout the **base** branch, not Dependabot's head. The run applies the upgrade
+itself; a head that is already at the target is a no-op and is refused.
+
+```bash
+NODE_ENV=development pnpm safe-upgrade --from-event
+```
+
+`--from-event` reads the package, version, workspace (`in /packages/app`),
+grouped `Updates \`pkg\` from x to y` lines, and pull number from
+`GITHUB_EVENT_PATH`. It comments the verdict on that pull request for
+`verified`, `blocked`, and `human_required`.
+
+Copy [`examples/dependabot-assess.yml`](examples/dependabot-assess.yml) into
+`.github/workflows`. For a version you already know,
+[`examples/scheduled-draft.yml`](examples/scheduled-draft.yml) opens a draft
+from `workflow_dispatch`.
+
+## Workspaces and more than one package
+
+```bash
+NODE_ENV=development pnpm safe-upgrade postcss@8.4.35 \
+  --repository ~/src/app \
+  --workspace packages/app \
+  --companion nanoid@5.0.0
+```
+
+- `--workspace` scopes the declaring manifest, the update, and the checks. A
+  Dependabot title's `in /path` fills this in. `packages/*` is expanded.
+- `--companion name@version` (repeatable) names further exact packages this run
+  may move. Grouped Dependabot bodies become companions the same way.
+- A peer the target declares that you did not name is reported and needs a
+  person. It is not moved.
+- Without `--allow-transitive`, any other lockfile version change stops the run.
+
+## What it will change, and what it will not
+
+It will update the named package(s) to the exact versions, refresh the lockfile,
+add a test when a call site has none, convert CommonJS to ESM when the target
+cannot be `require`d, add a workflow that runs the checks it verified, and
+rename a call site when the old export is gone, the new one exists, and the
+release note says one became the other.
+
+It will not invent a replacement for a removed export, enable dependency
+lifecycle scripts, edit an existing workflow in place, or treat a green test
+suite as proof when the broken call site is uncovered.
+
+Try `fixtures/legacy-app` (`escape-string-regexp@5.0.0`) for an ESM migration
+that asks for approval, and `fixtures/prefix-tool` (`postcss@8.4.35`) for a
+removed export the suite does not catch.
+
+## Engine
+
+The default route is deterministic: a pure function of run state. That is a
+supported configuration.
+
+```bash
+NODE_ENV=development pnpm safe-upgrade cookie@1.0.2 \
+  --repository ~/src/app \
+  --engine jev
+```
+
+`--engine jev` needs `TYPESAFE_API_KEY` in the environment. Below
+`--confidence` (default 0.6) the engine's answer is replaced by the
+deterministic order.
+
+## Environment
+
+| Variable | Used for |
+| --- | --- |
+| `GITHUB_TOKEN` or `GH_TOKEN` | Draft pull requests and PR comments. Never a flag. |
+| `TYPESAFE_API_KEY` | `--engine jev`. Never a flag. |
+| `TENUO_ROOT_PUBLIC_KEY`, `TENUO_RUN_WARRANT`, `TENUO_RUN_HOLDER_SECRET` | Production: narrow a warrant an issuer granted. All three, or none. |
+| `NODE_ENV=development` | Local trial that mints its own authority. Reported on stderr. |
+
+`pnpm safe-upgrade --help` is the flag list.
