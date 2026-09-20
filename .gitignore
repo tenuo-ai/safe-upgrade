@@ -10,5 +10,7 @@ coverage/
 .DS_Store
 
 # Engineering notes. Local only — not the user guide.
-docs/
+docs/spec.md
+docs/deviations.md
+docs/strategy.md
 internal/

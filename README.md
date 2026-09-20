@@ -161,3 +161,6 @@ deterministic order.
 | `NODE_ENV=development` | Local trial that mints its own authority. Reported on stderr. |
 
 `pnpm safe-upgrade --help` is the flag list.
+
+How a run is split across specialists, and what each of them is allowed to
+do, is in [`docs/architecture.md`](docs/architecture.md).
