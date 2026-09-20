@@ -487,3 +487,20 @@ The property is judged by running `node --check` on the output as a `.mjs` file,
 first checked as `.cjs` so that the transform is not held to account for files that never parsed.
 A regular expression asserting the output "looks like" a module would be the same kind of
 reasoning that produced the output, and could agree with the same mistake.
+
+## A refusal names the thing that is wrong
+
+Running against deliberately broken repositories found no failures of safety and three failures
+of explanation, each of which would have cost someone an afternoon.
+
+A repository with no `package.json` was told it needed a lockfile, because the package manager
+was detected before the manifest was read. That is advice nobody can follow: no install produces
+a lockfile until there is a manifest to install from. The manifest is read first now, and a
+missing one, an unreadable one, and one whose JSON does not parse are three different sentences.
+
+A repository with no commits reported `git rev-parse HEAD failed`, which is true and useless. The
+ordinary cause is a checkout initialised a moment earlier.
+
+Messages that named a path were naming the temporary worktree, which is deleted when the run
+ends. A reader following one of those went looking for a directory that no longer existed instead
+of at their own checkout.

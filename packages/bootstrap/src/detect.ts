@@ -71,8 +71,11 @@ export function detectRepositoryFacts(request: DetectionRequest): Detection {
   const root = request.worktreePath;
   const warnings: string[] = [];
 
-  const { manager, lockfile } = detectPackageManager(root);
+  // The manifest first. Detecting the manager first meant a repository with no `package.json`,
+  // or one whose JSON does not parse, was told it needed a lockfile — advice that cannot be
+  // followed, since no install will produce one until the manifest is fixed.
   const manifest = readManifest(join(root, "package.json"));
+  const { manager, lockfile } = detectPackageManager(root);
   assertManagerAgreement(manifest, manager, lockfile);
   assertLockfileWritable(root, manager);
 
@@ -159,14 +162,22 @@ function readManifest(path: string): Manifest {
     if (cause instanceof RepositoryError) {
       throw cause;
     }
-    throw new RepositoryError(`cannot read ${path}`, { cause });
+    // Not the path: this runs inside a temporary worktree, and naming it sends the reader to a
+    // directory that no longer exists rather than to their own checkout.
+    const missing = (cause as { code?: string }).code === "ENOENT";
+    throw new RepositoryError(
+      missing
+        ? "this repository has no package.json at its root, so there is no dependency list to upgrade"
+        : "this repository's package.json could not be read",
+      { cause },
+    );
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch (cause) {
-    throw new RepositoryError(`${path} is not valid JSON`, { cause });
+    throw new RepositoryError("this repository's package.json is not valid JSON", { cause });
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw new RepositoryError(`${path} must contain a JSON object`);

@@ -195,7 +195,16 @@ export function isolateRepository(request: IsolationRequest): Isolation {
 
 function resolveStartCommit(sourcePath: string, requested: string | undefined): string {
   if (requested === undefined) {
-    return gitRead(sourcePath, ["rev-parse", "HEAD"]);
+    try {
+      return gitRead(sourcePath, ["rev-parse", "HEAD"]);
+    } catch (cause) {
+      // The ordinary case is a repository initialised a moment ago. `git rev-parse HEAD failed`
+      // is true and tells the reader nothing about what to do next.
+      throw new RepositoryError(
+        "this repository has no commits, and this run works from a commit so that the change it makes can be described as a diff against one",
+        { cause },
+      );
+    }
   }
   if (!COMMIT.test(requested)) {
     // Deliberately not a revision expression. `HEAD@{1}`, `main~3`, and a branch
