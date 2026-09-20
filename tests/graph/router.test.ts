@@ -1,0 +1,221 @@
+/**
+ * Router behavior: what happens when the decision engine misbehaves.
+ *
+ * The engine is treated as an untrusted component throughout. Each test here
+ * gives it a chance to derail the run and checks that it cannot.
+ */
+
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
+import { AuditLog } from "@safe-upgrade/evidence";
+import { FakeDecisionEngine } from "@safe-upgrade/jev";
+import type { UpgradeRequest } from "@safe-upgrade/domain";
+import {
+  ACTION_WORKER,
+  UNSET_REQUEST,
+  buildRouteInput,
+  decideRoute,
+  eligibleActions,
+  type RouterConfig,
+  type UpgradeState,
+} from "@safe-upgrade/graph";
+import { check, finding } from "../support/graph-harness.ts";
+
+const config: RouterConfig = { confidenceThreshold: 0.6, maxGraphSteps: 40, maxWorkerAttempts: 3 };
+
+const request: UpgradeRequest = {
+  ...UNSET_REQUEST,
+  runId: randomUUID(),
+  repositoryPath: "/tmp/worktree",
+  packageName: "left-pad",
+  targetVersion: "1.3.0",
+};
+
+/**
+ * A state with several eligible actions, so the engine has a genuine choice and
+ * the router does not short-circuit to the single-candidate path.
+ */
+function stateWithChoices(overrides: Partial<UpgradeState> = {}): UpgradeState {
+  return {
+    request,
+    phase: "route",
+    step: 3,
+    repository: null,
+    releaseEvidence: [],
+    findings: [finding("f1"), finding("f2")],
+    baselineChecks: [check("test", "passed")],
+    postChangeChecks: [],
+    fileChanges: [],
+    testAssessment: null,
+    ciAssessment: { sufficient: false, missingChecks: ["typecheck"] },
+    routeHistory: [],
+    workerAttempts: {},
+    activeSessionRef: null,
+    addressedFindingIds: [],
+    verifiedFindingIds: [],
+    targetVersionResolved: false,
+    diffPolicyPassed: true,
+    lastVerification: "not_run",
+    blockingConditions: [],
+    highSeverityUncertainty: [],
+    prohibitedActions: [],
+    pendingApprovals: [],
+    approvalGranted: false,
+    draftPullRequestUrl: null,
+    result: null,
+    ...overrides,
+  } as UpgradeState;
+}
+
+let audit: AuditLog;
+
+beforeEach(() => {
+  audit = new AuditLog({ runId: request.runId });
+});
+
+afterEach(() => {
+  // Nothing to clean up: the router touches no filesystem and no session.
+});
+
+describe("candidate construction", () => {
+  it("offers only actions that are both legal and currently sensible", () => {
+    const candidates = eligibleActions(stateWithChoices(), config).map((entry) => entry.action);
+    expect(candidates).toContain("implement");
+    expect(candidates).toContain("assess_verification");
+    expect(candidates).toContain("configure_ci");
+    // Nothing has changed yet, so there is nothing to verify or publish.
+    expect(candidates).not.toContain("verify");
+    expect(candidates).not.toContain("publish_draft");
+  });
+
+  it("never offers publish_draft before verification passes", () => {
+    const candidates = eligibleActions(
+      stateWithChoices({ approvalGranted: true, lastVerification: "failed" }),
+      config,
+    ).map((entry) => entry.action);
+    expect(candidates).not.toContain("publish_draft");
+  });
+
+  it("withholds a worker that has exhausted its attempts", () => {
+    const candidates = eligibleActions(
+      stateWithChoices({ workerAttempts: { implementer: 3 } }),
+      config,
+    ).map((entry) => entry.action);
+    expect(candidates).not.toContain("implement");
+  });
+
+  it("sends no repository content or log output to the engine", () => {
+    const input = buildRouteInput(stateWithChoices(), config);
+    const serialized = JSON.stringify(input);
+    expect(serialized).not.toContain("/tmp/worktree/src");
+    // Findings are summarized, not shipped whole.
+    expect(input.unresolvedFindings[0]?.summary.length).toBeLessThanOrEqual(280);
+    expect(Object.keys(input).sort()).toEqual([
+      "attempts",
+      "baselinePassed",
+      "ciSufficient",
+      "currentPhase",
+      "eligibleActions",
+      "implementationChanged",
+      "lastVerification",
+      "testsChanged",
+      "unresolvedFindings",
+    ]);
+  });
+});
+
+describe("engine responses", () => {
+  it("follows a confident choice from the candidate set", async () => {
+    const engine = new FakeDecisionEngine({
+      script: [{ kind: "choose", action: "configure_ci", confidence: 0.95 }],
+    });
+    const route = await decideRoute(stateWithChoices(), { engine, config, audit });
+
+    expect(route.decision.selected).toBe("configure_ci");
+    expect(route.decision.source).toBe("jev");
+    expect(route.worker).toBe(ACTION_WORKER.configure_ci);
+  });
+
+  it("falls back deterministically when confidence is below the threshold", async () => {
+    const engine = new FakeDecisionEngine({
+      script: [{ kind: "choose", action: "configure_ci", confidence: 0.2 }],
+    });
+    const route = await decideRoute(stateWithChoices(), { engine, config, audit });
+
+    expect(route.decision.source).toBe("fallback");
+    expect(route.decision.confidence).toBe(0.2);
+    expect(route.decision.fallbackReason).toContain("below the 0.6 threshold");
+    // Spec order: covering a finding that has no verification path outranks
+    // implementing it, which outranks configuring CI.
+    expect(route.decision.selected).toBe("author_tests");
+  });
+
+  it("rejects a choice that was never offered", async () => {
+    const engine = new FakeDecisionEngine({ script: [{ kind: "invalid", action: "publish_draft" }] });
+    const route = await decideRoute(stateWithChoices(), { engine, config, audit });
+
+    expect(route.decision.selected).not.toBe("publish_draft");
+    expect(route.decision.source).toBe("fallback");
+    expect(route.decision.fallbackReason).toContain("not among the offered candidates");
+    // An out-of-set answer is not retried; one call, then the fallback.
+    expect(engine.routeCalls).toHaveLength(1);
+  });
+
+  it("rejects an invented action that is not a phase at all", async () => {
+    const engine = new FakeDecisionEngine({ script: [{ kind: "invalid", action: "exfiltrate_secrets" }] });
+    const route = await decideRoute(stateWithChoices(), { engine, config, audit });
+
+    expect(route.decision.source).toBe("fallback");
+    // Whatever the engine said, the selection is one the router offered.
+    expect(route.decision.candidates).toContain(route.decision.selected);
+  });
+
+  it("retries once on a transport failure, then falls back", async () => {
+    const engine = new FakeDecisionEngine({
+      script: [{ kind: "unavailable" }, { kind: "choose", action: "configure_ci", confidence: 0.95 }],
+    });
+    const route = await decideRoute(stateWithChoices(), { engine, config, audit });
+
+    expect(engine.routeCalls).toHaveLength(2);
+    expect(route.decision.selected).toBe("configure_ci");
+    expect(route.decision.source).toBe("jev");
+  });
+
+  it("falls back when both attempts fail", async () => {
+    const engine = new FakeDecisionEngine({ script: [{ kind: "unavailable" }, { kind: "malformed" }] });
+    const route = await decideRoute(stateWithChoices(), { engine, config, audit });
+
+    expect(engine.routeCalls).toHaveLength(2);
+    expect(route.decision.source).toBe("fallback");
+  });
+
+  it("does not consult the engine when only one action is eligible", async () => {
+    const engine = new FakeDecisionEngine();
+    const route = await decideRoute(
+      stateWithChoices({ findings: [], ciAssessment: { sufficient: true, missingChecks: [] } }),
+      { engine, config, audit },
+    );
+
+    expect(engine.routeCalls).toHaveLength(0);
+    expect(route.decision.selected).toBe("finalize");
+    expect(route.decision.fallbackReason).toBe("only one eligible action");
+  });
+});
+
+describe("audit trail", () => {
+  it("records the candidates, the choice, and why each was eligible", async () => {
+    const engine = new FakeDecisionEngine({
+      script: [{ kind: "choose", action: "implement", confidence: 0.88 }],
+    });
+    await decideRoute(stateWithChoices(), { engine, config, audit });
+
+    const recorded = audit.ofType("route_decision");
+    expect(recorded).toHaveLength(1);
+    const payload = recorded[0]?.payload as Record<string, unknown>;
+    expect(payload.selected).toBe("implement");
+    expect(payload.source).toBe("jev");
+    expect(payload.confidence).toBe(0.88);
+    expect(payload.candidates).toContain("configure_ci");
+    expect(payload.eligibilityReasons).toMatchObject({ implement: expect.any(String) });
+  });
+});

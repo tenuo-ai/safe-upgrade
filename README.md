@@ -21,9 +21,13 @@ Implemented so far:
 | `@safe-upgrade/evidence` | Content hashing, secret redaction, append-only audit log |
 | `@safe-upgrade/tools` | Path safety, file, process, package, release, git, and GitHub tools |
 | `@safe-upgrade/authorization` | Capability ceilings, worker profiles, session registry, delegation broker |
+| `@safe-upgrade/jev` | Decision engine contract, response validation, deterministic fallback, offline engine |
+| `@safe-upgrade/graph` | LangGraph state machine, transition allowlist, eligibility predicates, router |
 
-Not built yet: the LangGraph state machine, the Jev decision adapter, the
-specialist workers, the report generator, and the end-to-end fixture.
+Not built yet: the Jev SDK adapter, the specialist worker implementations, the
+report generator, and the end-to-end fixture. The graph runs today against
+scripted workers and the deterministic decision engine, which is how the routing
+tests exercise it without network access.
 
 ## The shape of the security argument
 
@@ -44,6 +48,14 @@ time.
 `narrow()`, which refuses to add a capability the parent lacks. The parent holds
 exactly the union of the ceilings, so the maximum authority of the whole run is
 one object you can read.
+
+**The decision engine chooses, it never authorizes.** The router computes the
+eligible actions deterministically, the engine picks one from that exact list, the
+response is validated against the same list, and trusted code maps the chosen
+action to a worker. An engine that returns an action nobody offered is rejected
+rather than retried, and a low-confidence answer is replaced by a fixed priority
+order. There is no wording that gets `publish_draft` offered before verification
+passed, and no response that supplies a worker identity.
 
 A few consequences worth stating plainly:
 

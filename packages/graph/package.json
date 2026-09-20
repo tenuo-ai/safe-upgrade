@@ -1,0 +1,21 @@
+{
+  "name": "@safe-upgrade/graph",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "dependencies": {
+    "@langchain/langgraph": "1.4.16",
+    "@safe-upgrade/authorization": "workspace:*",
+    "@safe-upgrade/domain": "workspace:*",
+    "@safe-upgrade/evidence": "workspace:*",
+    "@safe-upgrade/jev": "workspace:*",
+    "@safe-upgrade/tools": "workspace:*",
+    "zod": "3.25.76"
+  }
+}

@@ -5,4 +5,6 @@ coverage/
 *.tsbuildinfo
 .env
 .env.*
+# The template carries variable names only, never values.
+!.env.example
 .DS_Store
