@@ -31,7 +31,7 @@ afterEach(() => {
 function fetchDocument(url: string): Promise<unknown> {
   const { broker, toolset } = harness.runtime;
   return broker.withWorker("researcher", "research", (handle) =>
-    handle.invoke("fetch_release_document", toolset.fetch_release_document, { url }),
+    handle.tools.fetch_release_document({ url }),
   );
 }
 

@@ -28,7 +28,7 @@ describe("per-invocation delegation", () => {
     for (const worker of ["inspector", "researcher", "inspector"] as const) {
       await broker.withWorker(worker, "inspect", async (handle) => {
         refs.push(handle.sessionRef);
-        return handle.invoke("read_file", toolset.read_file, { path: harness.path("package.json") });
+        return handle.tools.read_file({ path: harness.path("package.json") });
       });
     }
     expect(new Set(refs).size).toBe(3);
@@ -161,7 +161,7 @@ describe("what reaches persisted state", () => {
   it("records no warrant or holder material in the audit log", async () => {
     const { broker, toolset, parentSession } = harness.runtime;
     await broker.withWorker("inspector", "inspect", (handle) =>
-      handle.invoke("read_file", toolset.read_file, { path: harness.path("package.json") }),
+      handle.tools.read_file({ path: harness.path("package.json") }),
     );
 
     const serialized = JSON.stringify(harness.audit.events);

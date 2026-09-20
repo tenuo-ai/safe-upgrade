@@ -129,7 +129,17 @@ describe("list_files", () => {
     writeFileSync(join(root, "src", "util.ts"), "export const u = 1;\n");
 
     const matched = await tools.listFiles.execute({ root, glob: "**/*.ts" });
-    expect(matched).toEqual(["src/index.ts", "src/util.ts"]);
+    // Absolute, so each result can be passed straight to `read_file`, which
+    // rejects relative paths.
+    expect(matched).toEqual([join(root, "src", "index.ts"), join(root, "src", "util.ts")]);
     expect(matched.some((file) => file.includes("node_modules"))).toBe(false);
+  });
+
+  it("matches the glob against the worktree-relative path, not the absolute one", async () => {
+    // Otherwise a pattern anchored at `src/` would never match, since the absolute
+    // path starts with the temporary directory.
+    expect(await tools.listFiles.execute({ root, glob: "src/*.ts" })).toEqual([
+      join(root, "src", "index.ts"),
+    ]);
   });
 });

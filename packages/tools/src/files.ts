@@ -225,13 +225,20 @@ export function createFileTools(context: ToolContext): {
     listFiles: defineTool<ListFilesArgs, readonly string[]>(
       context,
       "list_files",
-      "List files under a directory that match a simple glob.",
+      "List files under a directory that match a simple glob. Returns absolute paths.",
       async (args) => {
         const resolved = resolveInsideRoot(context.paths, args.root);
         const matcher = globToRegExp(args.glob);
+        // Absolute, because every path *argument* in this package is absolute:
+        // `read_file` rejects a relative path outright, and the capability that
+        // bounds it is `under(worktreeRoot)`, which a relative path cannot satisfy.
+        // Returning worktree-relative paths here made the obvious next call fail and
+        // left each caller rebuilding the prefix by hand. The glob is still matched
+        // against the relative path, so a pattern stays readable.
         return walk(resolved.absolute, 20_000)
-          .map((file) => relative(context.paths.realRoot, file).split(sep).join("/"))
-          .filter((file) => matcher.test(file))
+          .map((file) => ({ file, rel: relative(context.paths.realRoot, file).split(sep).join("/") }))
+          .filter(({ rel }) => matcher.test(rel))
+          .map(({ file }) => file)
           .sort();
       },
     ),

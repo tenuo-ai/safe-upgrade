@@ -29,7 +29,7 @@ describe("inspector", () => {
   it("reads repository files", async () => {
     const { broker, toolset } = harness.runtime;
     const result = await broker.withWorker("inspector", "inspect", (handle) =>
-      handle.invoke("read_file", toolset.read_file, { path: harness.path("package.json") }),
+      handle.tools.read_file({ path: harness.path("package.json") }),
     );
     expect(result.content).toContain("fixture-app");
   });
@@ -38,7 +38,7 @@ describe("inspector", () => {
     const { broker, toolset } = harness.runtime;
     await expect(
       broker.withWorker("inspector", "inspect", (handle) =>
-        handle.invoke("write_source_file", toolset.write_source_file, {
+        handle.tools.write_source_file({
           path: harness.path("src", "index.ts"),
           expectedBeforeHash: ABSENT,
           content: "compromised",
@@ -53,16 +53,17 @@ describe("researcher", () => {
   it("lists repository files", async () => {
     const { broker, toolset } = harness.runtime;
     const files = await broker.withWorker("researcher", "research", (handle) =>
-      handle.invoke("list_files", toolset.list_files, { root: harness.root, glob: "src/**" }),
+      handle.tools.list_files({ root: harness.root, glob: "src/**" }),
     );
-    expect(files).toContain("src/index.ts");
+    // Absolute, so the next call can be `read_file` without rebuilding the prefix.
+    expect(files).toContain(`${harness.root}/src/index.ts`);
   });
 
   it("cannot run any check", async () => {
     const { broker, toolset } = harness.runtime;
     await expect(
       broker.withWorker("researcher", "research", (handle) =>
-        handle.invoke("run_check", toolset.run_check, { kind: "test", script: "", workspace: "" }),
+        handle.tools.run_check({ kind: "test", script: "", workspace: "" }),
       ),
     ).rejects.toBeInstanceOf(AuthorizationError);
     expect(harness.invocations).not.toContain("run_check");
@@ -73,7 +74,7 @@ describe("test author", () => {
   it("writes a test file", async () => {
     const { broker, toolset } = harness.runtime;
     const result = await broker.withWorker("test_author", "author_tests", (handle) =>
-      handle.invoke("write_test_file", toolset.write_test_file, {
+      handle.tools.write_test_file({
         path: harness.path("src", "migration.test.ts"),
         ...newFile("test('migration', () => {});\n"),
       }),
@@ -86,7 +87,7 @@ describe("test author", () => {
     const { broker, toolset } = harness.runtime;
     await expect(
       broker.withWorker("test_author", "author_tests", (handle) =>
-        handle.invoke("run_check", toolset.run_check, { kind: "build", script: "", workspace: "" }),
+        handle.tools.run_check({ kind: "build", script: "", workspace: "" }),
       ),
     ).rejects.toBeInstanceOf(AuthorizationError);
     expect(harness.invocations).not.toContain("run_check");
@@ -98,10 +99,10 @@ describe("implementer", () => {
     const { broker, toolset } = harness.runtime;
     const before = readFileSync(harness.path("src", "index.ts"), "utf8");
     const read = await broker.withWorker("implementer", "implement", (handle) =>
-      handle.invoke("read_file", toolset.read_file, { path: harness.path("src", "index.ts") }),
+      handle.tools.read_file({ path: harness.path("src", "index.ts") }),
     );
     const result = await broker.withWorker("implementer", "implement", (handle) =>
-      handle.invoke("write_source_file", toolset.write_source_file, {
+      handle.tools.write_source_file({
         path: harness.path("src", "index.ts"),
         expectedBeforeHash: read.hash,
         content: `${before}export const migrated = true;\n`,
@@ -115,7 +116,7 @@ describe("implementer", () => {
     const { broker, toolset } = harness.runtime;
     await expect(
       broker.withWorker("implementer", "implement", (handle) =>
-        handle.invoke("write_test_file", toolset.write_test_file, {
+        handle.tools.write_test_file({
           path: harness.path("src", "sneaky.test.ts"),
           ...newFile("test.skip('regression', () => {});\n"),
         }),
@@ -129,7 +130,7 @@ describe("ci author", () => {
   it("writes a workflow file", async () => {
     const { broker, toolset } = harness.runtime;
     const result = await broker.withWorker("ci_author", "configure_ci", (handle) =>
-      handle.invoke("write_ci_file", toolset.write_ci_file, {
+      handle.tools.write_ci_file({
         path: harness.path(".github", "workflows", "verify.yml"),
         ...newFile("name: verify\non: [pull_request]\n"),
       }),
@@ -141,7 +142,7 @@ describe("ci author", () => {
     const { broker, toolset } = harness.runtime;
     await expect(
       broker.withWorker("ci_author", "configure_ci", (handle) =>
-        handle.invoke("write_source_file", toolset.write_source_file, {
+        handle.tools.write_source_file({
           path: harness.path("src", "index.ts"),
           expectedBeforeHash: ABSENT,
           content: "compromised",
@@ -156,7 +157,7 @@ describe("verifier", () => {
   it("reads the worktree", async () => {
     const { broker, toolset } = harness.runtime;
     const result = await broker.withWorker("verifier", "verify", (handle) =>
-      handle.invoke("read_file", toolset.read_file, { path: harness.path("src", "index.ts") }),
+      handle.tools.read_file({ path: harness.path("src", "index.ts") }),
     );
     expect(result.fileClass).toBe("source");
   });
@@ -172,7 +173,7 @@ describe("verifier", () => {
     for (const attempt of [
       () =>
         broker.withWorker("verifier", "verify", (handle) =>
-          handle.invoke("write_source_file", toolset.write_source_file, {
+          handle.tools.write_source_file({
             path: harness.path("src", "index.ts"),
             expectedBeforeHash: ABSENT,
             content: "x",
@@ -180,14 +181,14 @@ describe("verifier", () => {
         ),
       () =>
         broker.withWorker("verifier", "verify", (handle) =>
-          handle.invoke("write_test_file", toolset.write_test_file, {
+          handle.tools.write_test_file({
             path: harness.path("src", "x.test.ts"),
             ...newFile("x"),
           }),
         ),
       () =>
         broker.withWorker("verifier", "verify", (handle) =>
-          handle.invoke("write_ci_file", toolset.write_ci_file, {
+          handle.tools.write_ci_file({
             path: harness.path(".github", "workflows", "x.yml"),
             ...newFile("x"),
           }),
@@ -203,7 +204,7 @@ describe("publisher", () => {
   it("reads git status", async () => {
     const { broker, toolset } = harness.runtime;
     const status = await broker.withWorker("publisher", "publish_draft", (handle) =>
-      handle.invoke("read_git_status", toolset.read_git_status, {}),
+      handle.tools.read_git_status({}),
     );
     expect(status.branch).toBe(harness.defaultBranch);
   });
@@ -212,7 +213,7 @@ describe("publisher", () => {
     const { broker, toolset } = harness.runtime;
     await expect(
       broker.withWorker("publisher", "publish_draft", (handle) =>
-        handle.invoke("read_file", toolset.read_file, { path: harness.path("package.json") }),
+        handle.tools.read_file({ path: harness.path("package.json") }),
       ),
     ).rejects.toBeInstanceOf(AuthorizationError);
     expect(harness.invocations).not.toContain("read_file");

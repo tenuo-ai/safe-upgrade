@@ -257,9 +257,9 @@ describe("authorization failures inside a node", () => {
         inspector: async () => ({ baselineChecks: [check("test", "passed")] }),
         researcher: async () => ({ findings: [finding("f1")], verifiedFindingIds: ["f1"] }),
         // A worker that reaches for a capability it does not hold.
-        implementer: async ({ handle, runtime, state }) =>
-          handle
-            .invoke("write_test_file", runtime.toolset.write_test_file, {
+        implementer: async ({ handle, state }) =>
+          handle.tools
+            .write_test_file({
               path: `${state.request.repositoryPath}/src/cheat.test.ts`,
               expectedBeforeHash: "absent",
               content: "test.skip('regression', () => {});\n",

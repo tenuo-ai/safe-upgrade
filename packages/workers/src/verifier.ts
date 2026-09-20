@@ -18,12 +18,7 @@ import type { CheckPurpose, CheckResult } from "@safe-upgrade/domain";
 import type { WorkerFn, WorkerInput } from "@safe-upgrade/graph";
 import type { UpgradeStateUpdate } from "@safe-upgrade/graph";
 import { checkOrder, recordCheck } from "./checks.ts";
-
-export interface VerifierOptions {
-  readonly checkScripts: Readonly<Partial<Record<CheckPurpose, string>>>;
-  readonly packageName: string;
-  readonly targetVersion: string;
-}
+import { inWorktree, type RunContext } from "./context.ts";
 
 /** Edits that weaken a test rather than satisfy it. */
 const WEAKENING = [
@@ -32,13 +27,13 @@ const WEAKENING = [
   { pattern: /^\+\s*(?:\/\/|\/\*)\s*(?:@ts-(?:ignore|expect-error)|eslint-disable)/m, description: "a suppression comment was added" },
 ];
 
-export function createVerifier(options: VerifierOptions): WorkerFn {
+export function createVerifier(options: RunContext): WorkerFn {
   return async (input: WorkerInput): Promise<UpgradeStateUpdate> => {
     const { handle, runtime, audit } = input;
 
     // Frozen, so this verifies the lockfile being shipped rather than whatever
     // the registry serves today. Lifecycle scripts stay off.
-    const install = await handle.invoke("install_dependencies", runtime.toolset.install_dependencies, {
+    const install = await handle.tools.install_dependencies({
       lockfile: "frozen",
       lifecycleScripts: "disabled",
     });
@@ -55,7 +50,7 @@ export function createVerifier(options: VerifierOptions): WorkerFn {
     }
 
     for (const { purpose, script } of checkOrder(options.checkScripts)) {
-      const outcome = await handle.invoke("run_check", runtime.toolset.run_check, {
+      const outcome = await handle.tools.run_check({
         kind: purpose,
         script,
         workspace: "",
@@ -64,7 +59,7 @@ export function createVerifier(options: VerifierOptions): WorkerFn {
     }
 
     const resolved = await resolvesToTarget(input, options);
-    const diff = await handle.invoke("read_git_diff", runtime.toolset.read_git_diff, { pathspec: "" });
+    const diff = await handle.tools.read_git_diff({ pathspec: "" });
     const violations = diffPolicyViolations(diff);
 
     const failedChecks = checks.filter((check) => check.outcome !== "passed");
@@ -97,10 +92,8 @@ export function createVerifier(options: VerifierOptions): WorkerFn {
  * The manifest must name the exact target. A range that happens to include the
  * target today is not the same claim: it resolves to something else tomorrow.
  */
-async function resolvesToTarget(input: WorkerInput, options: VerifierOptions): Promise<boolean> {
-  const manifest = await input.handle.invoke("read_file", input.runtime.toolset.read_file, {
-    path: `${input.state.repository?.worktreePath ?? ""}/package.json`,
-  });
+async function resolvesToTarget(input: WorkerInput, options: RunContext): Promise<boolean> {
+  const manifest = await input.handle.tools.read_file({ path: inWorktree(options, "package.json") });
   let parsed: unknown;
   try {
     parsed = JSON.parse(manifest.content);
@@ -117,9 +110,9 @@ async function resolvesToTarget(input: WorkerInput, options: VerifierOptions): P
     if (typeof declared !== "object" || declared === null) {
       continue;
     }
-    const specifier = (declared as Record<string, unknown>)[options.packageName];
+    const specifier = (declared as Record<string, unknown>)[options.request.packageName];
     if (typeof specifier === "string") {
-      return specifier === options.targetVersion;
+      return specifier === options.request.targetVersion;
     }
   }
   return false;

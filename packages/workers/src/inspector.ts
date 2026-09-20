@@ -11,35 +11,23 @@
  * worktree's git state through a protected tool, and running the baseline.
  */
 
-import type { CheckPurpose, RepositoryFacts } from "@safe-upgrade/domain";
+import type { CheckPurpose } from "@safe-upgrade/domain";
 import type { WorkerFn, WorkerInput } from "@safe-upgrade/graph";
 import type { UpgradeStateUpdate } from "@safe-upgrade/graph";
 import { checkOrder, recordCheck } from "./checks.ts";
+import type { RunContext } from "./context.ts";
 
-export interface InspectorOptions {
-  readonly facts: RepositoryFacts;
-  /** Script to run per detected check purpose. */
-  readonly checkScripts: Readonly<Partial<Record<CheckPurpose, string>>>;
-  /** Purposes the repository does not define, or defines unrunnably. */
-  readonly absentChecks: readonly CheckPurpose[];
-  /** Commit the worktree was created from. */
-  readonly startCommit: string;
-  /** Whether the user's checkout was clean when the run started. */
-  readonly sourceClean: boolean;
-  readonly detectionWarnings: readonly string[];
-}
-
-export function createInspector(options: InspectorOptions): WorkerFn {
+export function createInspector(options: RunContext): WorkerFn {
   return async (input: WorkerInput): Promise<UpgradeStateUpdate> =>
     input.state.phase === "baseline_verify" ? runBaseline(input, options) : confirmFacts(input, options);
 }
 
 async function confirmFacts(
   input: WorkerInput,
-  options: InspectorOptions,
+  options: RunContext,
 ): Promise<UpgradeStateUpdate> {
   const { handle, runtime, audit } = input;
-  const status = await handle.invoke("read_git_status", runtime.toolset.read_git_status, {});
+  const status = await handle.tools.read_git_status({});
 
   const blocking: string[] = [];
   // The worktree was created moments ago from a known commit. If it is dirty or
@@ -102,11 +90,11 @@ async function confirmFacts(
  */
 async function runBaseline(
   input: WorkerInput,
-  options: InspectorOptions,
+  options: RunContext,
 ): Promise<UpgradeStateUpdate> {
   const { handle, runtime, audit } = input;
 
-  const install = await handle.invoke("install_dependencies", runtime.toolset.install_dependencies, {
+  const install = await handle.tools.install_dependencies({
     lockfile: "frozen",
     lifecycleScripts: "disabled",
   });
@@ -124,7 +112,7 @@ async function runBaseline(
   }
 
   for (const { purpose, script } of checkOrder(options.checkScripts)) {
-    const outcome = await handle.invoke("run_check", runtime.toolset.run_check, {
+    const outcome = await handle.tools.run_check({
       kind: purpose,
       script,
       workspace: "",

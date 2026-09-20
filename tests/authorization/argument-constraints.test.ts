@@ -26,7 +26,7 @@ describe("path constraints", () => {
     const { broker, toolset } = harness.runtime;
     await expect(
       broker.withWorker("researcher", "research", (handle) =>
-        handle.invoke("read_file", toolset.read_file, { path: "/etc/passwd" }),
+        handle.tools.read_file({ path: "/etc/passwd" }),
       ),
     ).rejects.toBeInstanceOf(AuthorizationError);
     expect(harness.invocations).toEqual([]);
@@ -36,7 +36,7 @@ describe("path constraints", () => {
     const { broker, toolset } = harness.runtime;
     await expect(
       broker.withWorker("ci_author", "configure_ci", (handle) =>
-        handle.invoke("write_ci_file", toolset.write_ci_file, {
+        handle.tools.write_ci_file({
           path: harness.path("src", "sneaky.yml"),
           expectedBeforeHash: ABSENT,
           content: "name: sneaky\n",
@@ -53,7 +53,7 @@ describe("path constraints", () => {
     // it happens before any byte is written.
     await expect(
       broker.withWorker("test_author", "author_tests", (handle) =>
-        handle.invoke("write_test_file", toolset.write_test_file, {
+        handle.tools.write_test_file({
           path: harness.path("src", "index.ts"),
           expectedBeforeHash: ABSENT,
           content: "export const greeting = 'owned';\n",
@@ -69,7 +69,7 @@ describe("package constraints", () => {
     const { broker, toolset } = harness.runtime;
     await expect(
       broker.withWorker("implementer", "implement", (handle) =>
-        handle.invoke("update_dependency", toolset.update_dependency, {
+        handle.tools.update_dependency({
           packageName: "lodash",
           targetVersion: "1.3.0",
         }),
@@ -82,7 +82,7 @@ describe("package constraints", () => {
     const { broker, toolset } = harness.runtime;
     await expect(
       broker.withWorker("implementer", "implement", (handle) =>
-        handle.invoke("update_dependency", toolset.update_dependency, {
+        handle.tools.update_dependency({
           packageName: "left-pad",
           targetVersion: "9.9.9",
         }),
@@ -95,7 +95,7 @@ describe("package constraints", () => {
     const { broker, toolset } = harness.runtime;
     await expect(
       broker.withWorker("verifier", "verify", (handle) =>
-        handle.invoke("install_dependencies", toolset.install_dependencies, {
+        handle.tools.install_dependencies({
           lockfile: "frozen",
           lifecycleScripts: "enabled",
         }),
@@ -108,7 +108,7 @@ describe("package constraints", () => {
     const { broker, toolset } = harness.runtime;
     await expect(
       broker.withWorker("verifier", "verify", (handle) =>
-        handle.invoke("install_dependencies", toolset.install_dependencies, {
+        handle.tools.install_dependencies({
           lockfile: "update",
           lifecycleScripts: "disabled",
         }),
@@ -123,7 +123,7 @@ describe("git and GitHub constraints", () => {
     const { broker, toolset } = harness.runtime;
     await expect(
       broker.withWorker("publisher", "publish_draft", (handle) =>
-        handle.invoke("push_branch", toolset.push_branch, { name: harness.defaultBranch }),
+        handle.tools.push_branch({ name: harness.defaultBranch }),
       ),
     ).rejects.toBeInstanceOf(AuthorizationError);
     expect(harness.invocations).toEqual([]);
@@ -133,7 +133,7 @@ describe("git and GitHub constraints", () => {
     const { broker, toolset } = harness.runtime;
     await expect(
       broker.withWorker("publisher", "publish_draft", (handle) =>
-        handle.invoke("push_branch", toolset.push_branch, { name: "safe-upgrade/someone-elses-run" }),
+        handle.tools.push_branch({ name: "safe-upgrade/someone-elses-run" }),
       ),
     ).rejects.toBeInstanceOf(AuthorizationError);
     expect(harness.invocations).toEqual([]);
@@ -145,7 +145,7 @@ describe("git and GitHub constraints", () => {
     expect(createDraftPr).toBeDefined();
     await expect(
       broker.withWorker("publisher", "publish_draft", (handle) =>
-        handle.invoke("create_draft_pr", createDraftPr!, {
+        handle.tools.create_draft_pr({
           base: harness.defaultBranch,
           head: harness.runBranch,
           title: "Upgrade left-pad",
@@ -164,7 +164,7 @@ describe("network constraints", () => {
     const { broker, toolset } = harness.runtime;
     await expect(
       broker.withWorker("researcher", "research", (handle) =>
-        handle.invoke("read_registry_metadata", toolset.read_registry_metadata, {
+        handle.tools.read_registry_metadata({
           packageName: "left-pad",
           version: "../../../etc/passwd",
         }),
@@ -179,7 +179,7 @@ describe("zero-trust argument naming", () => {
     const { broker, toolset } = harness.runtime;
     await expect(
       broker.withWorker("researcher", "research", (handle) =>
-        handle.invoke("read_file", toolset.read_file, {
+        handle.tools.read_file({
           path: harness.path("package.json"),
           // Not part of the capability, and therefore not merely ignored.
           followSymlinks: true,
@@ -199,7 +199,7 @@ describe("zero-trust argument naming", () => {
     const { broker, toolset } = harness.runtime;
     await expect(
       broker.withWorker("inspector", "inspect", (handle) =>
-        handle.invoke("read_git_status", toolset.read_git_status, {
+        handle.tools.read_git_status({
           pathspec: "../../etc/passwd",
         } as Parameters<typeof toolset.read_git_status.execute>[0]),
       ),

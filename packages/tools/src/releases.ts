@@ -37,6 +37,33 @@ export interface FetchedDocument {
   readonly truncated: boolean;
 }
 
+/**
+ * How a package expects to be loaded.
+ *
+ * Worth its own field because it is the difference that breaks a CommonJS caller
+ * without any API changing: a package that becomes `"type": "module"` cannot be
+ * `require()`d, and nothing about its exported names has to move for that to be
+ * true.
+ */
+export type ModuleType = "module" | "commonjs" | "unknown";
+
+/**
+ * The part of a published manifest a worker may see.
+ *
+ * An allowlist, not a pass-through. The registry document is remote text, and
+ * forwarding it whole would put arbitrary attacker-chosen keys into graph state
+ * and from there into a prompt and a checkpoint. Everything here is either a value
+ * from a closed set or a string we have bounded.
+ */
+export interface PublishedShape {
+  readonly moduleType: ModuleType;
+  readonly hasExportsField: boolean;
+  /** Whether the package still offers a CommonJS entry point. */
+  readonly hasCommonJsEntry: boolean;
+  readonly requiredNodeRange: string | null;
+  readonly deprecated: string | null;
+}
+
 export interface RegistryMetadata {
   readonly packageName: string;
   readonly version: string;
@@ -44,6 +71,7 @@ export interface RegistryMetadata {
   readonly repositoryUrl: string | null;
   readonly homepage: string | null;
   readonly publishedAt: string | null;
+  readonly shape: PublishedShape;
   readonly contentHash: string;
   readonly retrievedAt: string;
 }
@@ -197,6 +225,72 @@ export function normalizeDocument(text: string, mediaType: string): string {
     .trim();
 }
 
+/** Bound a remote string before it can reach state, a prompt, or a checkpoint. */
+function boundedString(value: unknown, limit: number): string | null {
+  return typeof value === "string" && value.length > 0 ? value.slice(0, limit) : null;
+}
+
+/**
+ * Read the load shape out of a published manifest.
+ *
+ * `exports` is inspected only for whether a `require` condition survives, because
+ * that is the question a CommonJS caller is asking. Its full shape is a nested,
+ * attacker-authored structure and is not something to walk into state.
+ */
+export function publishedShape(manifest: Record<string, unknown>): PublishedShape {
+  const declaredType = manifest.type;
+  const moduleType: ModuleType =
+    declaredType === "module" ? "module" : declaredType === "commonjs" ? "commonjs" : "unknown";
+  const exportsField = manifest.exports;
+  const hasExportsField = exportsField !== undefined && exportsField !== null;
+  const engines = manifest.engines;
+  const requiredNodeRange =
+    typeof engines === "object" && engines !== null
+      ? boundedString((engines as Record<string, unknown>).node, 128)
+      : null;
+
+  return {
+    moduleType,
+    hasExportsField,
+    hasCommonJsEntry: hasCommonJsEntry(moduleType, exportsField, manifest.main),
+    requiredNodeRange,
+    deprecated: boundedString(manifest.deprecated, 512),
+  };
+}
+
+function hasCommonJsEntry(
+  moduleType: ModuleType,
+  exportsField: unknown,
+  main: unknown,
+): boolean {
+  // An ESM-typed package can still be required if it exposes a `require`
+  // condition, so the declared type alone does not settle it.
+  if (exportsField !== undefined && exportsField !== null) {
+    return mentionsRequireCondition(exportsField, 0) || (moduleType !== "module" && typeof main === "string");
+  }
+  if (moduleType === "module") {
+    // `.cjs` stays CommonJS regardless of the package type.
+    return typeof main === "string" && main.endsWith(".cjs");
+  }
+  return typeof main === "string" || moduleType === "commonjs";
+}
+
+/** Depth-limited: the structure is remote and may be deeply nested on purpose. */
+function mentionsRequireCondition(node: unknown, depth: number): boolean {
+  if (depth > 8 || typeof node !== "object" || node === null) {
+    return false;
+  }
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "require" || key === "default" && typeof value === "string" && value.endsWith(".cjs")) {
+      return true;
+    }
+    if (mentionsRequireCondition(value, depth + 1)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 async function fetchFollowing(
   raw: string,
   limits: { readonly timeoutMs: number; readonly maxBytes: number },
@@ -297,6 +391,7 @@ export function createReleaseTools(
           repositoryUrl,
           homepage: typeof parsed.homepage === "string" ? parsed.homepage : null,
           publishedAt: null,
+          shape: publishedShape(parsed),
           contentHash: document.contentHash,
           retrievedAt: document.retrievedAt,
         };

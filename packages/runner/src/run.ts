@@ -121,15 +121,16 @@ export async function runUpgrade(options: RunOptions): Promise<RunReport> {
       audit,
     });
 
+    // Everything the workers are told, in one value, all of it produced by
+    // trusted code before any worker held a capability.
     const workers = createWorkerRegistry({
+      request,
       facts: detection.facts,
       checkScripts: detection.checkScripts,
       absentChecks: detection.absentChecks,
       startCommit: isolation.startCommit,
       sourceClean: isolation.sourceClean,
       detectionWarnings: detection.warnings,
-      packageName: options.packageName,
-      targetVersion: options.targetVersion,
     });
 
     const graph = buildGraph({

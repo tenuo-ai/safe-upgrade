@@ -30,6 +30,8 @@ export { assertSafeScriptName, createPackageTools, isScriptBodyRunnable } from "
 export type {
   FetchReleaseDocumentArgs,
   FetchedDocument,
+  ModuleType,
+  PublishedShape,
   ReadRegistryMetadataArgs,
   RegistryMetadata,
 } from "./releases.ts";
@@ -38,6 +40,7 @@ export {
   createReleaseTools,
   isPrivateAddress,
   normalizeDocument,
+  publishedShape,
 } from "./releases.ts";
 
 export type { BranchArgs, GitStatus, ReadGitDiffArgs } from "./git.ts";

@@ -10,7 +10,7 @@
  * in this system, so it is logged as evidence rather than swallowed as an error.
  */
 
-import { AuthorizationError } from "@safe-upgrade/domain";
+import { AuthorizationError, ToolExecutionError } from "@safe-upgrade/domain";
 import type { Phase, WorkerId } from "@safe-upgrade/domain";
 import type { AuditLog } from "@safe-upgrade/evidence";
 import { sha256Canonical, sha256Hex } from "@safe-upgrade/evidence";
@@ -21,13 +21,30 @@ import {
   type SessionInfo,
   type Tenuo,
 } from "@tenuo/core";
-import type { Capability } from "./capabilities.ts";
+import { CAPABILITIES, type Capability } from "./capabilities.ts";
+import type { ProtectedToolset } from "./protected-tools.ts";
 import type { WorkerProfile } from "./profiles.ts";
 import { SessionRegistry } from "./session-registry.ts";
 
 type AnyProtectedTool<A extends Record<string, unknown>, R> = ProtectedTool<{
   execute: (args: A) => Promise<R>;
 }>;
+
+type BoundTool<T> = T extends ProtectedTool<{ execute: (args: infer A) => Promise<infer R> }>
+  ? (args: A) => Promise<R>
+  : never;
+
+/**
+ * Every capability, already bound to this worker's session.
+ *
+ * Deliberately the whole set rather than only what the profile grants. A worker
+ * calling something it does not hold must be *denied*, which is an event worth
+ * recording; if the method were simply missing, the same mistake would surface as
+ * a TypeError with no audit trail and nothing for the tests to assert against.
+ */
+export type BoundToolset = {
+  readonly [K in Capability]: BoundTool<NonNullable<ProtectedToolset[K]>>;
+};
 
 export interface WorkerHandle {
   readonly worker: WorkerId;
@@ -41,14 +58,16 @@ export interface WorkerHandle {
    */
   readonly grant: SessionInfo;
   /**
-   * Call a protected tool as this worker. Authorization runs first, so a denial
+   * The only way a worker reaches a tool. Authorization runs first, so a denial
    * never reaches the tool body.
+   *
+   * Each call carries its own capability name because the name comes from the key,
+   * not from an argument. The earlier signature took both a name and a tool, which
+   * meant every call site restated the name and could restate it wrongly — naming
+   * `read_file` while passing `write_source_file` type-checked and audited the
+   * wrong capability.
    */
-  invoke<A extends Record<string, unknown>, R>(
-    capability: Capability,
-    tool: AnyProtectedTool<A, R>,
-    args: A,
-  ): Promise<R>;
+  readonly tools: BoundToolset;
 }
 
 export interface DelegationBrokerOptions {
@@ -56,6 +75,8 @@ export interface DelegationBrokerOptions {
   readonly parentSession: Session;
   readonly profiles: Readonly<Record<WorkerId, WorkerProfile>>;
   readonly audit: AuditLog;
+  /** Bound per invocation, so a worker never holds an unbound tool. */
+  readonly toolset: ProtectedToolset;
   readonly registry?: SessionRegistry;
 }
 
@@ -70,12 +91,14 @@ export class DelegationBroker {
   private readonly profiles: Readonly<Record<WorkerId, WorkerProfile>>;
   private readonly audit: AuditLog;
   readonly registry: SessionRegistry;
+  private readonly toolset: ProtectedToolset;
 
   constructor(options: DelegationBrokerOptions) {
     this.tenuo = options.tenuo;
     this.parentSession = options.parentSession;
     this.profiles = options.profiles;
     this.audit = options.audit;
+    this.toolset = options.toolset;
     this.registry = options.registry ?? new SessionRegistry();
   }
 
@@ -126,8 +149,7 @@ export class DelegationBroker {
       sessionRef,
       capabilities,
       grant: granted,
-      invoke: (capability, tool, args) =>
-        this.invokeAs(worker, phase, sessionRef, childSession, capability, tool, args),
+      tools: this.bind(worker, phase, sessionRef, childSession),
     };
 
     try {
@@ -141,6 +163,37 @@ export class DelegationBroker {
         payload: { sessionRef, liveSessions: this.registry.size },
       });
     }
+  }
+
+  /**
+   * One bound function per capability, built from the toolset's own keys so the
+   * two cannot drift apart.
+   */
+  private bind(worker: WorkerId, phase: Phase, sessionRef: string, session: Session): BoundToolset {
+    const bound: Record<string, (args: Record<string, unknown>) => Promise<unknown>> = {};
+    for (const capability of CAPABILITIES) {
+      const tool = this.toolset[capability];
+      if (tool === undefined) {
+        // `create_draft_pr` exists only when the run has a GitHub repository and
+        // token. A worker that asks for it anyway gets a clear refusal rather than
+        // a TypeError from calling undefined.
+        bound[capability] = async () => {
+          throw new ToolExecutionError(`${capability} is not configured for this run`);
+        };
+        continue;
+      }
+      bound[capability] = (args) =>
+        this.invokeAs(
+          worker,
+          phase,
+          sessionRef,
+          session,
+          capability,
+          tool as AnyProtectedTool<Record<string, unknown>, unknown>,
+          args,
+        );
+    }
+    return bound as unknown as BoundToolset;
   }
 
   private async invokeAs<A extends Record<string, unknown>, R>(

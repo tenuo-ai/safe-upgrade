@@ -81,10 +81,45 @@ describeE2E("a real baseline run against the fixture", () => {
     expect(readFileSync(String(testCheck?.stdoutArtifact), "utf8")).toMatch(/pass 3/);
   });
 
+  it("researched the real package and found the break by itself", () => {
+    // Nothing in this test names ESM. The finding comes from the published
+    // manifests of 4.0.0 and 5.0.0, fetched from the registry during the run.
+    const finding = report.finalState.findings.find((candidate) => candidate.id === "esm-only-at-target");
+    expect(finding?.releaseClaim).toMatch(/ES module with no CommonJS entry point/);
+    expect(finding?.confidence).toBe(1);
+
+    // Both real call sites, and not the test file, which does not import the
+    // package directly.
+    expect(finding?.affectedFiles).toEqual(["src/highlight.js", "src/search.js"]);
+  });
+
+  it("cites evidence that can be checked against what was retrieved", () => {
+    const evidence = report.finalState.releaseEvidence;
+    const ids = evidence.map((record) => record.id);
+    expect(ids).toContain("registry:escape-string-regexp@5.0.0");
+
+    for (const record of evidence) {
+      // A hash of exactly what was fetched, so a claim can be re-checked rather
+      // than believed.
+      expect(record.contentHash).toMatch(/^[0-9a-f]{64}$/);
+      expect(record.retrievedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    }
+
+    // Every finding cites at least one stored record, and cites nothing that was
+    // not stored.
+    for (const finding of report.finalState.findings) {
+      expect(finding.evidenceIds.length).toBeGreaterThan(0);
+      for (const id of finding.evidenceIds) {
+        expect(ids).toContain(id);
+      }
+    }
+  });
+
   it("stops at the first worker that does not exist, and says so", () => {
     expect(report.result.status).toBe("blocked");
-    expect(report.result.reasons.join(" ")).toMatch(/researcher worker is not implemented/);
-    // It got as far as research, which means inspect and baseline both succeeded.
+    expect(report.result.reasons.join(" ")).toMatch(/test_author worker is not implemented/);
+    // It got past research, which means inspect, baseline, and research all
+    // succeeded against the real package.
     expect(report.finalState.phase).toBe("finalize");
   });
 

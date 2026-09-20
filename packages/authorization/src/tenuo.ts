@@ -85,6 +85,7 @@ function assemble(
     parentSession,
     profiles,
     audit: options.audit,
+    toolset,
     registry,
   });
   return { tenuo, parentSession, ceilings, profiles, toolset, broker, registry, toolContext };

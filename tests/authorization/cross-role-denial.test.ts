@@ -36,7 +36,7 @@ it("denies a test author writing production code, and nothing happens", async ()
 
   const outcome = await broker
     .withWorker("test_author", "author_tests", (handle) =>
-      handle.invoke("write_source_file", toolset.write_source_file, args),
+      handle.tools.write_source_file(args),
     )
     .then(
       () => null,
@@ -82,7 +82,7 @@ it("still allows the test author its own write after being denied", async () => 
 
   await expect(
     broker.withWorker("test_author", "author_tests", (handle) =>
-      handle.invoke("write_source_file", toolset.write_source_file, {
+      handle.tools.write_source_file({
         path: harness.path("src", "index.ts"),
         expectedBeforeHash: ABSENT,
         content: "nope",
@@ -93,7 +93,7 @@ it("still allows the test author its own write after being denied", async () => 
   // A denial is a routing signal, not a poisoned runtime: the worker can still
   // do the job it is actually authorized for.
   const written = await broker.withWorker("test_author", "author_tests", (handle) =>
-    handle.invoke("write_test_file", toolset.write_test_file, {
+    handle.tools.write_test_file({
       path: harness.path("src", "regression.test.ts"),
       expectedBeforeHash: ABSENT,
       content: "test('regression', () => {});\n",
