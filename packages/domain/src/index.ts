@@ -54,3 +54,11 @@ export {
   VerificationError,
   isUpgradeError,
 } from "./errors.ts";
+
+export type { ElevationGrant, ElevationRequest } from "./elevation.ts";
+export {
+  describeElevation,
+  elevationId,
+  elevationRequest,
+  grantFor,
+} from "./elevation.ts";

@@ -1,13 +1,19 @@
 import type { WorkerRegistry } from "@safe-upgrade/graph";
 import type { RunContext } from "./context.ts";
+import { createImplementer } from "./implementer.ts";
 import { createInspector } from "./inspector.ts";
 import { createResearcher } from "./research/researcher.ts";
+import { createTestAuthor } from "./test-author.ts";
 import { createVerifier } from "./verifier.ts";
 import { unimplementedWorker } from "./unimplemented.ts";
 
 export type { RunContext } from "./context.ts";
 export { inWorktree } from "./context.ts";
+export { createImplementer } from "./implementer.ts";
 export { createInspector } from "./inspector.ts";
+export { convertToEsm } from "./migrate/to-esm.ts";
+export type { Conversion, ConversionResult, Refusal } from "./migrate/to-esm.ts";
+export { createTestAuthor, exportedNames, loadTest, testPathFor } from "./test-author.ts";
 export { createVerifier, diffPolicyViolations } from "./verifier.ts";
 export { createResearcher, githubRepository } from "./research/researcher.ts";
 export { deriveFindings, relevantExtract } from "./research/derive.ts";
@@ -27,14 +33,8 @@ export function createWorkerRegistry(context: RunContext): WorkerRegistry {
     inspector: createInspector(context),
     researcher: createResearcher(context),
     verifier: createVerifier(context),
-    test_author: unimplementedWorker(
-      "test_author",
-      "assessing test sufficiency and writing tests that would detect the regression",
-    ),
-    implementer: unimplementedWorker(
-      "implementer",
-      "moving the dependency to the target version and migrating affected code",
-    ),
+    test_author: createTestAuthor(context),
+    implementer: createImplementer(context),
     ci_author: unimplementedWorker("ci_author", "adding the missing checks to CI"),
     publisher: unimplementedWorker(
       "publisher",

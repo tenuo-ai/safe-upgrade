@@ -17,6 +17,7 @@ import type {
   CheckPurpose,
   CheckResult,
   CiAssessment,
+  ElevationRequest,
   FileChange,
   FinalResult,
   MigrationFinding,
@@ -42,6 +43,22 @@ const append = <T>() =>
 const union = () =>
   Annotation<readonly string[], readonly string[]>({
     reducer: (current, update) => [...new Set([...current, ...update])],
+    default: () => [],
+  });
+
+/**
+ * Append, but at most once per id.
+ *
+ * For values whose id *is* their identity. A worker that is routed to twice asks for
+ * the same approval twice, and a report listing the same request three times is
+ * asking the reader to check whether the three are actually the same.
+ */
+const appendDistinct = <T extends { readonly id: string }>() =>
+  Annotation<readonly T[], readonly T[]>({
+    reducer: (current, update) => {
+      const seen = new Set(current.map((value) => value.id));
+      return [...current, ...update.filter((value) => !seen.has(value.id))];
+    },
     default: () => [],
   });
 
@@ -104,6 +121,12 @@ export const UpgradeStateAnnotation = Annotation.Root({
   highSeverityUncertainty: append<string>(),
   prohibitedActions: append<string>(),
   pendingApprovals: union(),
+  /**
+   * Calls a worker asked a human to approve. Append-only: a request that was
+   * granted stays in the record, because the approval is part of why the run did
+   * what it did.
+   */
+  elevationRequests: appendDistinct<ElevationRequest>(),
 
   approvalGranted: replace<boolean>(() => false),
   draftPullRequestUrl: replace<string | null>(() => null),

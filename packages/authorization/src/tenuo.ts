@@ -8,6 +8,7 @@
  * never create authority for itself.
  */
 
+import { join } from "node:path";
 import { createTenuo, type Session, type Tenuo } from "@tenuo/core";
 import type { PackageManager } from "@safe-upgrade/domain";
 import type { AuditLog } from "@safe-upgrade/evidence";
@@ -34,6 +35,8 @@ export interface RuntimeOptions {
   readonly defaultBranch: string;
   readonly runBranch: string;
   readonly requestedPackage: string;
+  /** Manifests this run may edit structurally, as absolute paths. */
+  readonly manifestPaths?: readonly string[];
   readonly targetVersion: string;
   readonly audit: AuditLog;
   readonly limits?: ToolLimits;
@@ -86,6 +89,8 @@ function assemble(
     profiles,
     audit: options.audit,
     toolset,
+    ceilings,
+    worktreeRoot: ceilingContext.worktreeRoot,
     registry,
   });
   return { tenuo, parentSession, ceilings, profiles, toolset, broker, registry, toolContext };
@@ -104,6 +109,9 @@ function contexts(options: RuntimeOptions): {
     runBranch: options.runBranch,
     releaseHosts: options.releaseHosts ?? RELEASE_HOST_ALLOWLIST,
     maxCommandTimeoutMs: limits.commandTimeoutMs,
+    // From detection. Defaults to the root manifest alone, which is what a
+    // single-package repository has and is the least this can be.
+    manifestPaths: options.manifestPaths ?? [join(paths.realRoot, "package.json")],
   };
   const toolContext: ToolContext = {
     paths,

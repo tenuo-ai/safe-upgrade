@@ -6,10 +6,10 @@
  * as child processes, every tool call passes a Tenuo capability check, and the
  * result is classified by the same code that will classify production runs.
  *
- * The run finishes as `blocked`, and that is the assertion. Five of the seven
- * workers are not written, so the honest outcome is a stop with the reason naming
- * the gap. A test that expected `verified` here would be asserting that the
- * system reports success for work nobody did.
+ * The run finishes as `human_required`, and that is the assertion. The migration
+ * this upgrade needs includes setting `package.json`'s `type` field, which no worker
+ * holds by default, so the honest outcome is a stop that names what it wants
+ * approved and changes nothing while it waits.
  *
  * Requires network access for the install, so it is opt-in via SAFE_UPGRADE_E2E.
  */
@@ -115,11 +115,12 @@ describeE2E("a real baseline run against the fixture", () => {
     }
   });
 
-  it("stops at the first worker that does not exist, and says so", () => {
-    expect(report.result.status).toBe("blocked");
-    expect(report.result.reasons.join(" ")).toMatch(/test_author worker is not implemented/);
-    // It got past research, which means inspect, baseline, and research all
-    // succeeded against the real package.
+  it("stops for a human rather than migrating without approval", () => {
+    // The implementer needs `package.json`'s `type` set to `module`, which no worker
+    // holds by default. It asks and stops. `tests/e2e/approved-upgrade.test.ts` runs
+    // the other half, where the same request is approved.
+    expect(report.result.status).toBe("human_required");
+    expect(report.result.reasons.join(" ")).toMatch(/awaiting approval: implementer calling update_manifest_field/);
     expect(report.finalState.phase).toBe("finalize");
   });
 
@@ -145,6 +146,7 @@ describeE2E("a real baseline run against the fixture", () => {
 
     // No tool call was denied: the workers that ran asked only for what their
     // profiles grant. A denial here would mean a worker and its profile disagree.
+    // The capability the implementer lacks is one it asks for rather than attempts.
     expect(types).not.toContain("tool_denied");
     expect(types).toContain("tool_allowed");
   });
@@ -153,7 +155,7 @@ describeE2E("a real baseline run against the fixture", () => {
     const result = JSON.parse(readFileSync(join(artifacts, "result.json"), "utf8")) as {
       status: string;
     };
-    expect(result.status).toBe("blocked");
+    expect(result.status).toBe("human_required");
 
     const markdown = readFileSync(join(artifacts, "report.md"), "utf8");
     expect(markdown).toMatch(new RegExp(`# Upgrade run ${RUN_ID}`));

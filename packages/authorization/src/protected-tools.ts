@@ -14,6 +14,7 @@ import {
   createFileTools,
   createGitHubTools,
   createGitTools,
+  createManifestTools,
   createPackageTools,
   createReleaseTools,
   type GitHubToolOptions,
@@ -32,6 +33,7 @@ export interface ProtectedToolset {
   readonly write_source_file: Wrapped<ReturnType<typeof createFileTools>["writeSourceFile"]>;
   readonly write_test_file: Wrapped<ReturnType<typeof createFileTools>["writeTestFile"]>;
   readonly write_ci_file: Wrapped<ReturnType<typeof createFileTools>["writeCiFile"]>;
+  readonly update_manifest_field: Wrapped<ReturnType<typeof createManifestTools>["updateManifestField"]>;
   readonly install_dependencies: Wrapped<ReturnType<typeof createPackageTools>["installDependencies"]>;
   readonly update_dependency: Wrapped<ReturnType<typeof createPackageTools>["updateDependency"]>;
   readonly run_check: Wrapped<ReturnType<typeof createPackageTools>["runCheck"]>;
@@ -70,6 +72,7 @@ export function createProtectedToolset(options: ProtectedToolsetOptions): Protec
   const packages = createPackageTools(context);
   const releases = createReleaseTools(context, options.releaseHosts);
   const git = createGitTools(context);
+  const manifest = createManifestTools(context);
 
   const toolset: ProtectedToolset = {
     read_file: wrap("read_file", files.readFile),
@@ -77,6 +80,7 @@ export function createProtectedToolset(options: ProtectedToolsetOptions): Protec
     write_source_file: wrap("write_source_file", files.writeSourceFile),
     write_test_file: wrap("write_test_file", files.writeTestFile),
     write_ci_file: wrap("write_ci_file", files.writeCiFile),
+    update_manifest_field: wrap("update_manifest_field", manifest.updateManifestField),
     install_dependencies: wrap("install_dependencies", packages.installDependencies),
     update_dependency: wrap("update_dependency", packages.updateDependency),
     run_check: wrap("run_check", packages.runCheck),

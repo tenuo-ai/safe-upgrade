@@ -7,7 +7,8 @@
  * wording that gets `publish_draft` offered before verification passed.
  */
 
-import type { RoutableAction } from "@safe-upgrade/domain";
+import { describeElevation, grantFor } from "@safe-upgrade/domain";
+import type { ElevationGrant, RoutableAction } from "@safe-upgrade/domain";
 import type { RouteCandidate } from "@safe-upgrade/jev";
 import { ACTION_WORKER, TRANSITIONS } from "./transitions.ts";
 import {
@@ -56,6 +57,12 @@ const RULES: readonly Rule[] = [
       if (uncovered.length === 0) {
         return null;
       }
+      // Deliberately not gated on an assessment existing. The spec's fallback order
+      // puts `author_tests` ahead of both `assess_verification` and `implement`, so
+      // requiring an assessment first deadlocks: `implement` outranks the assessment
+      // and wins every round, and the assessment never happens. The test author
+      // assesses as part of authoring instead, and records the result, which is what
+      // makes this rule stop being true.
       if (state.testAssessment?.sufficient === true) {
         return null;
       }
@@ -185,7 +192,10 @@ export function eligibleActions(state: UpgradeState, config: EligibilityConfig):
  * Approvals that are pending rather than missing: a technically valid next step
  * that only a human can authorize. Reported as `human_required`, not as failure.
  */
-export function pendingApprovalsFor(state: UpgradeState): readonly string[] {
+export function pendingApprovalsFor(
+  state: UpgradeState,
+  grants: readonly ElevationGrant[] = [],
+): readonly string[] {
   const pending: string[] = [];
   if (
     state.request.createDraftPullRequest &&
@@ -194,6 +204,14 @@ export function pendingApprovalsFor(state: UpgradeState): readonly string[] {
     !state.approvalGranted
   ) {
     pending.push("draft pull request creation");
+  }
+  for (const request of state.elevationRequests) {
+    if (grantFor(request, grants) !== null) {
+      continue;
+    }
+    // The id is included because it is what a grant has to name. A pending approval
+    // a person cannot act on is not much better than a silent failure.
+    pending.push(`${describeElevation(request)} — ${request.reason} (approval id ${request.id})`);
   }
   return pending;
 }

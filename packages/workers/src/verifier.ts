@@ -83,9 +83,29 @@ export function createVerifier(options: RunContext): WorkerFn {
       lastVerification: passed ? "passed" : "failed",
       diffPolicyPassed: violations.length === 0,
       targetVersionResolved: resolved,
+      verifiedFindingIds: passed ? verifiedFindings(input) : [],
       ...(violations.length > 0 ? { prohibitedActions: violations } : {}),
     };
   };
+}
+
+/**
+ * Which findings this verification actually establishes.
+ *
+ * Only this worker sets these ids, and only from checks it ran itself. "A test was
+ * written for it" is a claim about a test; this is a claim about a test that
+ * executed and passed against a clean install.
+ *
+ * A finding whose affected files nothing reaches is excluded even when everything
+ * passed, because a green suite that never loads the changed code has not
+ * established anything about it. The test author's assessment is what says which
+ * those are.
+ */
+function verifiedFindings(input: WorkerInput): readonly string[] {
+  const uncovered = new Set(input.state.testAssessment?.uncoveredFindings ?? []);
+  return input.state.findings
+    .filter((finding) => finding.noSourceChangeRequired === true || !uncovered.has(finding.id))
+    .map((finding) => finding.id);
 }
 
 /**

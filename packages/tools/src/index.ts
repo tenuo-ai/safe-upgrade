@@ -48,3 +48,14 @@ export { assertBranchName, createGitTools } from "./git.ts";
 
 export type { CreateDraftPrArgs, DraftPullRequest, GitHubToolOptions } from "./github.ts";
 export { createGitHubTools } from "./github.ts";
+
+export type {
+  UpdateManifestFieldArgs,
+  UpdateManifestFieldResult,
+} from "./manifest.ts";
+export {
+  EDITABLE_MANIFEST_FIELDS,
+  allowedManifestValues,
+  createManifestTools,
+  setTopLevelField,
+} from "./manifest.ts";

@@ -16,6 +16,7 @@
 
 import { join } from "node:path";
 import { exact, max, oneOf, regex, under, urlSafe, wildcard, type ConstraintExpr } from "@tenuo/core";
+import { EDITABLE_MANIFEST_FIELDS, allowedManifestValues } from "@safe-upgrade/tools";
 import type {
   BranchArgs,
   CreateDraftPrArgs,
@@ -28,6 +29,7 @@ import type {
   ReadRegistryMetadataArgs,
   RunCheckArgs,
   UpdateDependencyArgs,
+  UpdateManifestFieldArgs,
   WriteFileArgs,
 } from "@safe-upgrade/tools";
 
@@ -37,6 +39,7 @@ export const CAPABILITIES = [
   "write_source_file",
   "write_test_file",
   "write_ci_file",
+  "update_manifest_field",
   "install_dependencies",
   "update_dependency",
   "run_check",
@@ -64,6 +67,7 @@ export interface CapabilityArgs {
   write_source_file: WriteFileArgs;
   write_test_file: WriteFileArgs;
   write_ci_file: WriteFileArgs;
+  update_manifest_field: UpdateManifestFieldArgs;
   install_dependencies: InstallArgs;
   update_dependency: UpdateDependencyArgs;
   run_check: RunCheckArgs;
@@ -92,6 +96,15 @@ export interface CeilingContext {
   readonly runBranch: string;
   readonly releaseHosts: readonly string[];
   readonly maxCommandTimeoutMs: number;
+  /**
+   * Manifests this run may edit structurally, from detection.
+   *
+   * Listed exactly rather than as `under(root)/**\/package.json`, so a manifest
+   * that appears in the worktree after detection ran is not editable. In a
+   * workspace the set is small and known, and an upgrade that needs to touch a
+   * manifest nobody enumerated is a run worth stopping.
+   */
+  readonly manifestPaths: readonly string[];
 }
 
 /**
@@ -135,6 +148,25 @@ export function capabilityCeilings(context: CeilingContext): Ceilings {
       path: under(workflows),
       expectedBeforeHash: anyText(),
       content: anyText(),
+    },
+
+    /**
+     * In the ceiling, in no worker's standing profile.
+     *
+     * The run may set a manifest's module type, because a CommonJS-to-ESM upgrade
+     * cannot be done without it. No worker holds it by default, because it changes
+     * how every file in the package loads. A worker asks, a human approves, and the
+     * broker narrows this down to the one approved call.
+     *
+     * Both the field and the value are constrained here as well as in the tool. The
+     * tool's allowlist is what makes the operation safe; these make it *auditable*,
+     * since a denial then names the argument that was out of bounds.
+     */
+    update_manifest_field: {
+      path: oneOf(context.manifestPaths),
+      field: oneOf(EDITABLE_MANIFEST_FIELDS),
+      value: oneOf(EDITABLE_MANIFEST_FIELDS.flatMap((field: string) => allowedManifestValues(field))),
+      expectedBeforeHash: anyText(),
     },
 
     install_dependencies: {

@@ -13,13 +13,15 @@
 
 import {
   classifyRun,
+  grantFor,
   upgradeRequestSchema,
   type CheckPurpose,
+  type ElevationGrant,
   type Phase,
   type WorkerId,
 } from "@safe-upgrade/domain";
 import type { AuditLog } from "@safe-upgrade/evidence";
-import type { AuthorizationRuntime, WorkerHandle } from "@safe-upgrade/authorization";
+import type { ApprovedElevation, AuthorizationRuntime, WorkerHandle } from "@safe-upgrade/authorization";
 import type { DecisionEngine } from "@safe-upgrade/jev";
 import { decideRoute, type RouterConfig } from "./router.ts";
 import { pendingApprovalsFor } from "./eligibility.ts";
@@ -51,6 +53,12 @@ export interface NodeDependencies {
   readonly config: RouterConfig;
   readonly requiredCheckPurposes?: readonly CheckPurpose[];
   readonly partialAllowed?: boolean;
+  /**
+   * Approvals for this run, from outside it. Configuration, not state: a grant is
+   * not something the graph can produce, and putting it in state would make it
+   * something a worker's update could reach.
+   */
+  readonly elevationGrants?: readonly ElevationGrant[];
   readonly clock?: () => Date;
 }
 
@@ -70,14 +78,22 @@ async function runWorker(
   state: UpgradeState,
 ): Promise<UpgradeStateUpdate> {
   const workerFn = dependencies.workers[worker];
-  const update = await dependencies.runtime.broker.withWorker(worker, phase, (handle) =>
-    workerFn({
-      state,
-      handle,
-      runtime: dependencies.runtime,
-      engine: dependencies.engine,
-      audit: dependencies.audit,
-    }),
+  // Approvals are matched here, in the graph, from recorded requests and grants
+  // that came from outside the run. The worker is handed the resulting session; it
+  // has no say in what went into it.
+  const elevations = approvedElevations(state, worker, dependencies.elevationGrants ?? []);
+  const update = await dependencies.runtime.broker.withWorker(
+    worker,
+    phase,
+    (handle) =>
+      workerFn({
+        state,
+        handle,
+        runtime: dependencies.runtime,
+        engine: dependencies.engine,
+        audit: dependencies.audit,
+      }),
+    { elevations },
   );
   return {
     ...update,
@@ -85,6 +101,31 @@ async function runWorker(
     workerAttempts: { [worker]: 1 },
     activeSessionRef: null,
   };
+}
+
+/**
+ * Requests by this worker that a grant answers.
+ *
+ * Both sides have to already exist: a request recorded in state by an earlier
+ * round, and a grant configured for this run. Nothing is inferred from a worker's
+ * current output, so a worker cannot request and self-approve within one turn.
+ */
+function approvedElevations(
+  state: UpgradeState,
+  worker: WorkerId,
+  grants: readonly ElevationGrant[],
+): readonly ApprovedElevation[] {
+  const approved: ApprovedElevation[] = [];
+  for (const request of state.elevationRequests) {
+    if (request.worker !== worker) {
+      continue;
+    }
+    const grant = grantFor(request, grants);
+    if (grant !== null) {
+      approved.push({ request, grant });
+    }
+  }
+  return approved;
 }
 
 /**
@@ -150,7 +191,7 @@ export function createNodes(dependencies: NodeDependencies): Readonly<Record<Pha
         step: 1,
         phase: route.decision.selected,
         routeHistory: [route.decision],
-        pendingApprovals: pendingApprovalsFor(state),
+        pendingApprovals: pendingApprovalsFor(state, dependencies.elevationGrants ?? []),
       };
     },
 

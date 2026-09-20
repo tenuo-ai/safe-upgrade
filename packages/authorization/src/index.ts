@@ -9,7 +9,13 @@ export { allWrappedTools, createProtectedToolset } from "./protected-tools.ts";
 
 export { SessionRegistry } from "./session-registry.ts";
 
-export type { DelegationBrokerOptions, WorkerHandle } from "./broker.ts";
+export type {
+  ApprovedElevation,
+  BoundToolset,
+  DelegationBrokerOptions,
+  WithWorkerOptions,
+  WorkerHandle,
+} from "./broker.ts";
 export { DelegationBroker } from "./broker.ts";
 
 export type {

@@ -88,6 +88,10 @@ export function deriveFindings(input: DerivationInput): Derivation {
       requiredChange:
         "Confirm CI and the repository's engines field allow the required Node version before shipping this.",
       confidence: 1,
+      // There is no edit that discharges this. It is a fact to confirm against the
+      // versions CI runs, and marking it as needing a source change would keep the
+      // implementer eligible forever over something it cannot do anything about.
+      noSourceChangeRequired: true,
     });
   }
 

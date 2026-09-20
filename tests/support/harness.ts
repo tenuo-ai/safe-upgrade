@@ -7,11 +7,11 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { AuditLog } from "@safe-upgrade/evidence";
+import { AuditLog, sha256Hex, type AuditEvent } from "@safe-upgrade/evidence";
 import { DEFAULT_LIMITS } from "@safe-upgrade/tools";
 import { createDevAuthorizationRuntime, type AuthorizationRuntime } from "@safe-upgrade/authorization";
 
@@ -25,7 +25,11 @@ export interface Harness {
   readonly runtime: AuthorizationRuntime;
   /** Names of tool bodies that began executing, in order. */
   readonly invocations: string[];
+  /** Everything the audit log recorded, for asserting on delegation and denial. */
+  readonly events: readonly AuditEvent[];
   path(...segments: string[]): string;
+  read(relativePath: string): string;
+  hashOf(relativePath: string): string;
   cleanup(): void;
 }
 
@@ -33,6 +37,10 @@ export interface HarnessOptions {
   readonly requestedPackage?: string;
   readonly targetVersion?: string;
   readonly withGitHub?: boolean;
+  /** Replaces the fixture manifest wholesale, for tests about editing it. */
+  readonly manifest?: Readonly<Record<string, unknown>>;
+  /** Additional manifests on disk and in the ceiling, as worktree-relative paths. */
+  readonly extraManifests?: readonly string[];
 }
 
 const FIXTURE_FILES: Readonly<Record<string, string>> = {
@@ -57,7 +65,14 @@ const FIXTURE_FILES: Readonly<Record<string, string>> = {
 
 export function createHarness(options: HarnessOptions = {}): Harness {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "safe-upgrade-")));
-  for (const [relative, content] of Object.entries(FIXTURE_FILES)) {
+  const files: Record<string, string> = { ...FIXTURE_FILES };
+  if (options.manifest !== undefined) {
+    files["package.json"] = `${JSON.stringify(options.manifest, null, 2)}\n`;
+  }
+  for (const extra of options.extraManifests ?? []) {
+    files[extra] = `${JSON.stringify({ name: extra, version: "1.0.0" }, null, 2)}\n`;
+  }
+  for (const [relative, content] of Object.entries(files)) {
     const absolute = join(root, relative);
     mkdirSync(join(absolute, ".."), { recursive: true });
     writeFileSync(absolute, content, "utf8");
@@ -83,6 +98,10 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     runBranch,
     requestedPackage: options.requestedPackage ?? "left-pad",
     targetVersion: options.targetVersion ?? "1.3.0",
+    manifestPaths: [
+      join(root, "package.json"),
+      ...(options.extraManifests ?? []).map((extra) => join(root, extra)),
+    ],
     audit,
     limits: DEFAULT_LIMITS,
     onInvoke: (name) => invocations.push(name),
@@ -99,7 +118,12 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     audit,
     runtime,
     invocations,
+    get events() {
+      return audit.events;
+    },
     path: (...segments) => join(root, ...segments),
+    read: (relativePath) => readFileSync(join(root, relativePath), "utf8"),
+    hashOf: (relativePath) => sha256Hex(readFileSync(join(root, relativePath), "utf8")),
     cleanup: () => rmSync(root, { recursive: true, force: true }),
   };
 }

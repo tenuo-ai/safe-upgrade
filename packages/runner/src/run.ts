@@ -16,9 +16,12 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import {
+  describeElevation,
+  grantFor,
   parseOrThrow,
   upgradeRequestSchema,
   type CheckPurpose,
+  type ElevationGrant,
   type FinalResult,
   type RepositoryFacts,
   type UpgradeRequest,
@@ -49,6 +52,14 @@ export interface RunOptions {
   readonly engine?: DecisionEngine;
   readonly router?: Partial<RouterConfig>;
   readonly partialAllowed?: boolean;
+  /**
+   * Approvals a person has already given, each naming one call by its request id.
+   *
+   * A run option rather than something the run can produce. A previous run reports
+   * what it needs approved; approving it is an action outside the run, and the next
+   * run is told the answer.
+   */
+  readonly approvals?: readonly ElevationGrant[];
   readonly clock?: () => Date;
 }
 
@@ -63,6 +74,8 @@ export interface RunReport {
   readonly absentChecks: readonly CheckPurpose[];
   readonly finalState: UpgradeState;
   readonly events: readonly AuditEvent[];
+  /** Approvals this run was given, so the report can tell granted from pending. */
+  readonly approvals: readonly ElevationGrant[];
   readonly artifactsDirectory: string | undefined;
 }
 
@@ -117,6 +130,7 @@ export async function runUpgrade(options: RunOptions): Promise<RunReport> {
       defaultBranch: isolation.defaultBranch,
       runBranch: isolation.runBranch,
       requestedPackage: options.packageName,
+      manifestPaths: detection.facts.manifests.map((manifest) => join(isolation.worktreePath, manifest)),
       targetVersion: options.targetVersion,
       audit,
     });
@@ -144,6 +158,7 @@ export async function runUpgrade(options: RunOptions): Promise<RunReport> {
       // gate as a failure of this run.
       requiredCheckPurposes: requiredPurposes(detection.checkScripts),
       partialAllowed: options.partialAllowed ?? true,
+      ...(options.approvals === undefined ? {} : { elevationGrants: options.approvals }),
       ...(options.clock === undefined ? {} : { clock: options.clock }),
     }).compile();
 
@@ -165,6 +180,7 @@ export async function runUpgrade(options: RunOptions): Promise<RunReport> {
       absentChecks: detection.absentChecks,
       finalState,
       events: audit.events,
+      approvals: options.approvals ?? [],
       artifactsDirectory,
     };
 
@@ -194,6 +210,11 @@ function requiredPurposes(
 /** Human-readable counterpart to result.json, per spec section 16. */
 export function renderReport(report: RunReport): string {
   const { result, facts, finalState } = report;
+  const granted = new Set(
+    finalState.elevationRequests
+      .filter((request) => grantFor(request, report.approvals) !== null)
+      .map((request) => request.id),
+  );
   const lines: string[] = [
     `# Upgrade run ${report.runId}`,
     "",
@@ -215,13 +236,13 @@ export function renderReport(report: RunReport): string {
 
   section("Why this result", result.reasons);
   section("What this run does not establish", result.unverifiedClaims);
-  section(
-    "Checks",
-    [...finalState.baselineChecks, ...finalState.postChangeChecks].map(
-      (check) =>
-        `${check.command.purpose} (${check.outcome}) — \`${check.command.executable} ${check.command.args.join(" ")}\``,
-    ),
-  );
+  // Split, because the same purposes appear in both and an unlabelled list of six
+  // entries reads as though the suite ran twice for no reason. Which side a check
+  // fell on is what makes a failure attributable to the change.
+  const describeCheck = (check: (typeof finalState.baselineChecks)[number]): string =>
+    `${check.command.purpose} (${check.outcome}) — \`${check.command.executable} ${check.command.args.join(" ")}\``;
+  section("Checks before the change", finalState.baselineChecks.map(describeCheck));
+  section("Checks after the change", finalState.postChangeChecks.map(describeCheck));
   section(
     "Checks this repository does not define",
     report.absentChecks.map((purpose) => `${purpose}: no runnable script, so no gate`),
@@ -230,6 +251,32 @@ export function renderReport(report: RunReport): string {
   section("Findings", finalState.findings.map((finding) => `${finding.id}: ${finding.releaseClaim}`));
   section("Residual uncertainty", finalState.highSeverityUncertainty);
   section("Prohibited actions", finalState.prohibitedActions);
+
+  // The approval id is the whole point of this section. A run that reports
+  // `human_required` and does not say what to approve, or how, has told the reader
+  // that they are blocked without telling them what unblocks them.
+  const ungranted = finalState.elevationRequests.filter(
+    (request) => !granted.has(request.id),
+  );
+  if (ungranted.length > 0) {
+    lines.push("## Approval needed before this can proceed", "");
+    for (const request of ungranted) {
+      lines.push(
+        `### ${describeElevation(request)}`,
+        "",
+        `- Why: ${request.reason}`,
+        `- Serves: ${request.findingIds.join(", ") || "no finding"}`,
+        `- Approval id: \`${request.id}\``,
+        "",
+        "Nothing was written. Re-run with this id approved to let it proceed:",
+        "",
+        "```json",
+        `{ "id": "${request.id}", "approvedBy": "<who>", "approvedAt": "<iso timestamp>" }`,
+        "```",
+        "",
+      );
+    }
+  }
 
   if (report.artifactsDirectory !== undefined) {
     lines.push(

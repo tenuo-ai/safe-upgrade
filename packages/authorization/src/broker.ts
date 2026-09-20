@@ -10,18 +10,22 @@
  * in this system, so it is logged as evidence rather than swallowed as an error.
  */
 
-import { AuthorizationError, ToolExecutionError } from "@safe-upgrade/domain";
-import type { Phase, WorkerId } from "@safe-upgrade/domain";
+import { join } from "node:path";
+import { AuthorizationError, ToolExecutionError, describeElevation, grantFor } from "@safe-upgrade/domain";
+import type { ElevationGrant, ElevationRequest, Phase, WorkerId } from "@safe-upgrade/domain";
 import type { AuditLog } from "@safe-upgrade/evidence";
 import { sha256Canonical, sha256Hex } from "@safe-upgrade/evidence";
 import {
   AuthorizationDeniedError,
+  exact,
+  type ConstraintExpr,
   type ProtectedTool,
+  type SessionAllow,
   type Session,
   type SessionInfo,
   type Tenuo,
 } from "@tenuo/core";
-import { CAPABILITIES, type Capability } from "./capabilities.ts";
+import { CAPABILITIES, type Capability, type Ceilings } from "./capabilities.ts";
 import type { ProtectedToolset } from "./protected-tools.ts";
 import type { WorkerProfile } from "./profiles.ts";
 import { SessionRegistry } from "./session-registry.ts";
@@ -70,6 +74,20 @@ export interface WorkerHandle {
   readonly tools: BoundToolset;
 }
 
+/** A request paired with the grant that approves it. */
+export interface ApprovedElevation {
+  readonly request: ElevationRequest;
+  readonly grant: ElevationGrant;
+}
+
+export interface WithWorkerOptions {
+  /**
+   * Approved calls to add to this worker's session, for this invocation only.
+   * Supplied by trusted routing code from recorded approvals, never by the worker.
+   */
+  readonly elevations?: readonly ApprovedElevation[];
+}
+
 export interface DelegationBrokerOptions {
   readonly tenuo: Tenuo;
   readonly parentSession: Session;
@@ -77,8 +95,23 @@ export interface DelegationBrokerOptions {
   readonly audit: AuditLog;
   /** Bound per invocation, so a worker never holds an unbound tool. */
   readonly toolset: ProtectedToolset;
+  /** The run's maximum authority, consulted before any elevation is honoured. */
+  readonly ceilings: Ceilings;
+  /** Canonical worktree root, for expanding relative paths in an elevation request. */
+  readonly worktreeRoot: string;
   readonly registry?: SessionRegistry;
 }
+
+/**
+ * Arguments an elevation request states as a worktree-relative path.
+ *
+ * Declared per capability rather than guessed from the argument name, so adding a
+ * capability with a path argument is a decision someone makes here rather than
+ * something that starts happening because a field was called `path`.
+ */
+const ELEVATION_PATH_ARGUMENTS: Partial<Record<Capability, readonly string[]>> = {
+  update_manifest_field: ["path"],
+};
 
 /** A stable, non-secret handle for a session, derived from its warrant chain. */
 function sessionDigest(session: Session): string {
@@ -92,6 +125,8 @@ export class DelegationBroker {
   private readonly audit: AuditLog;
   readonly registry: SessionRegistry;
   private readonly toolset: ProtectedToolset;
+  private readonly ceilings: Ceilings;
+  private readonly worktreeRoot: string;
 
   constructor(options: DelegationBrokerOptions) {
     this.tenuo = options.tenuo;
@@ -99,6 +134,8 @@ export class DelegationBroker {
     this.profiles = options.profiles;
     this.audit = options.audit;
     this.toolset = options.toolset;
+    this.ceilings = options.ceilings;
+    this.worktreeRoot = options.worktreeRoot;
     this.registry = options.registry ?? new SessionRegistry();
   }
 
@@ -110,10 +147,13 @@ export class DelegationBroker {
     worker: WorkerId,
     phase: Phase,
     body: (handle: WorkerHandle) => Promise<T>,
+    options: WithWorkerOptions = {},
   ): Promise<T> {
     const profile = this.profiles[worker];
-    const capabilities = Object.keys(profile.allow) as Capability[];
-    const childSession = this.tenuo.narrow(this.parentSession, profile.allow, {
+    const elevations = this.elevate(worker, phase, options.elevations ?? []);
+    const { allow, granted: elevated } = this.narrowable(worker, phase, profile.allow, elevations);
+    const capabilities = Object.keys(allow) as Capability[];
+    const childSession = this.tenuo.narrow(this.parentSession, allow, {
       // Every worker is a leaf. No worker spawns anything, so none of them needs
       // to delegate, and a session that cannot delegate cannot be the start of a
       // chain nobody planned.
@@ -137,6 +177,7 @@ export class DelegationBroker {
         capabilities,
         ttlSeconds: profile.ttlSeconds,
         rationale: profile.rationale,
+        elevatedCapabilities: elevated,
         depth: granted.depth,
         terminal: granted.terminal,
         expiresAt: granted.expiresAt,
@@ -163,6 +204,167 @@ export class DelegationBroker {
         payload: { sessionRef, liveSessions: this.registry.size },
       });
     }
+  }
+
+  /**
+   * Drop an elevation that the ceiling will not accept.
+   *
+   * Narrowing to a value the parent never permitted is not a denial at call time:
+   * Tenuo refuses to build the chain at all, which is the stronger behaviour and
+   * exactly what should happen. But it surfaces as an error thrown while setting up,
+   * with no record of what was attempted, and the run would end as an unexplained
+   * crash rather than as a refused approval.
+   *
+   * So the narrow is attempted, and a failure falls back to the worker's standing
+   * profile with the refusal recorded. The worker then runs with the authority it
+   * always had, and the call it wanted is denied through the normal path.
+   */
+  private narrowable(
+    worker: WorkerId,
+    phase: Phase,
+    standing: SessionAllow,
+    elevations: { readonly allow: SessionAllow; readonly granted: readonly string[] },
+  ): { readonly allow: SessionAllow; readonly granted: readonly string[] } {
+    if (elevations.granted.length === 0) {
+      return { allow: standing, granted: [] };
+    }
+    const combined = { ...standing, ...elevations.allow };
+    try {
+      // Built and discarded. The only question being asked is whether the ceiling
+      // permits it; the session actually used is created by the caller.
+      this.tenuo.narrow(this.parentSession, combined, { terminal: true, ttlSeconds: 1 });
+      return { allow: combined, granted: elevations.granted };
+    } catch (error) {
+      this.audit.record({
+        phase,
+        worker,
+        type: "elevation_refused",
+        payload: {
+          elevationIds: elevations.granted,
+          reason: "the approved arguments fall outside the run's ceiling",
+          detail: error instanceof Error ? error.message : String(error),
+        },
+      });
+      return { allow: standing, granted: [] };
+    }
+  }
+
+  /**
+   * Turn approved requests into a single-call allow, and refuse everything else.
+   *
+   * The approval *is* the constraint. Each argument value from the request becomes
+   * an `exact()`, so the elevated capability permits precisely the call that was
+   * approved and no neighbouring one: approval to set `type` to `"module"` does
+   * not authorize setting it to `"commonjs"`, and approval to edit one manifest
+   * does not reach another.
+   *
+   * Nothing here can widen the run. `narrow` only ever intersects, so a capability
+   * absent from the ceiling stays absent however many grants arrive, and an
+   * `exact()` outside the ceiling's own constraint yields a capability that denies
+   * every call. The ceiling remains the statement of what this run may do at most;
+   * elevation only decides whether a worker is holding part of it right now.
+   */
+  private elevate(
+    worker: WorkerId,
+    phase: Phase,
+    approved: readonly ApprovedElevation[],
+  ): { readonly allow: SessionAllow; readonly granted: readonly string[] } {
+    const allow: Record<string, Record<string, ConstraintExpr>> = {};
+    const granted: string[] = [];
+
+    for (const { request, grant } of approved) {
+      const capability = request.capability as Capability;
+      // An approval is for one worker. Without this, a grant recorded for the
+      // implementer would be handed to whichever worker ran next and happened to
+      // carry the same request forward in state.
+      if (request.worker !== worker) {
+        this.audit.record({
+          phase,
+          worker,
+          type: "elevation_refused",
+          payload: {
+            elevationId: request.id,
+            capability: request.capability,
+            reason: `the approval is for ${request.worker}`,
+          },
+        });
+        continue;
+      }
+      // The ceiling is consulted by name first, so a request naming something this
+      // run never had is rejected here rather than becoming a session that denies
+      // every call and looks like a worker bug.
+      if (!(capability in this.ceilings)) {
+        this.audit.record({
+          phase,
+          worker,
+          type: "elevation_refused",
+          payload: {
+            elevationId: request.id,
+            capability: request.capability,
+            reason: "the capability is not in the run's ceiling",
+          },
+        });
+        continue;
+      }
+      // The id is recomputed from the request, so a request cannot borrow the id of
+      // some other approved call.
+      if (grantFor(request, [grant]) === null) {
+        this.audit.record({
+          phase,
+          worker,
+          type: "elevation_refused",
+          payload: {
+            elevationId: request.id,
+            capability: request.capability,
+            reason: "the grant does not match the request it is attached to",
+          },
+        });
+        continue;
+      }
+
+      // The ceiling's own constraints stay in place, with the approved arguments
+      // pinned to `exact()` on top. So `expectedBeforeHash` keeps whatever the
+      // ceiling said about it, while the field and the value are exactly what was
+      // approved — and if the ceiling was narrower than the approval, the ceiling
+      // still wins, because `narrow` intersects.
+      allow[capability] = {
+        ...(this.ceilings[capability] as Record<string, ConstraintExpr>),
+        ...Object.fromEntries(
+          Object.entries(request.arguments).map(([name, value]) => [
+            name,
+            exact(this.concreteValue(capability, name, value)),
+          ]),
+        ),
+      };
+      granted.push(request.id);
+      this.audit.record({
+        phase,
+        worker,
+        type: "elevation_granted",
+        payload: {
+          elevationId: request.id,
+          capability: request.capability,
+          request: describeElevation(request),
+          reason: request.reason,
+          findingIds: request.findingIds,
+          approvedBy: grant.approvedBy,
+          approvedAt: grant.approvedAt,
+        },
+      });
+    }
+
+    return { allow: allow as SessionAllow, granted };
+  }
+
+  /**
+   * Expand a request's stable value into the one the tool will actually receive.
+   *
+   * Only paths need it, and only because a request has to name a file in a way that
+   * still means something after the worktree it lived in has been deleted.
+   */
+  private concreteValue(capability: Capability, argument: string, value: string): string {
+    const pathArguments = ELEVATION_PATH_ARGUMENTS[capability] ?? [];
+    return pathArguments.includes(argument) ? join(this.worktreeRoot, value) : value;
   }
 
   /**
