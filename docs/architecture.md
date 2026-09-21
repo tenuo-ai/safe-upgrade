@@ -6,6 +6,43 @@ what happens in that copy, and which part of the run is allowed to do it.
 
 How to invoke the command is in the [README](../README.md).
 
+## The four roles
+
+The architecture separates orchestration, semantic judgement, patch generation,
+and authorization. Each role has a different input and a different kind of
+control over the run.
+
+| Component | Responsibility |
+| --- | --- |
+| **LangGraph** | Carries state through the workflow, exposes only eligible actions, records the route, and limits repeated attempts. |
+| **Jev** | Judges test coverage, migration completeness, and the next eligible action from bounded evidence. |
+| **Coding model** | Proposes complete test or source file contents for findings outside the built-in transforms. It receives no tool handle or warrant. |
+| **Tenuo** | Issues a separate warrant to each specialist, constraining its tools and arguments for that invocation. |
+
+The final result still comes from deterministic policy and repository checks.
+Jev can require more work or prevent a `verified` result, while Tenuo decides
+whether an operation is authorized to run.
+
+### A removed API from finding to verification
+
+With Jev and a patch model enabled, an unfamiliar API removal follows this
+sequence:
+
+1. The researcher records the removed API, release evidence, and affected
+   repository files.
+2. The coding model proposes a behavioral test from those bounded inputs.
+3. The test author validates the proposal and writes it through a warrant limited
+   to test paths.
+4. Jev judges whether the new test exercises the reported break.
+5. The coding model proposes the source migration.
+6. The implementer validates the proposal and writes it through a separate
+   warrant limited to production source.
+7. LangGraph advances the candidate to the verifier, which installs the updated
+   lockfile, runs the checks, inspects the diff, and accounts for every finding.
+
+The audit log records the proposal, the specialist that applied it, the warrant
+decision, the semantic assessments, and the final checks.
+
 ## Your checkout is not touched
 
 The path you pass as `--repository` is read. A temporary git worktree is
