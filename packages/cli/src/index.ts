@@ -1,5 +1,7 @@
 export { parseArguments, UsageError, wantsHelp, wantsVersion } from "./arguments.ts";
 export type { ParsedArguments } from "./arguments.ts";
+export { discoverUpgradeCandidate } from "./discovery.ts";
+export type { CandidateDiscovery, DiscoveryOptions, RegistryFetch, UpgradeCandidate } from "./discovery.ts";
 export { parseBumpTitle, parseGroupedUpdates, readPullRequestEvent } from "./event.ts";
 export type { PullRequestEvent } from "./event.ts";
 export { EXIT, exitCodeFor, main, summarize } from "./main.ts";

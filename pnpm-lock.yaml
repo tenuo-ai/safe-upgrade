@@ -83,6 +83,9 @@ importers:
       '@safe-upgrade/authorization':
         specifier: workspace:*
         version: link:../authorization
+      '@safe-upgrade/bootstrap':
+        specifier: workspace:*
+        version: link:../bootstrap
       '@safe-upgrade/domain':
         specifier: workspace:*
         version: link:../domain

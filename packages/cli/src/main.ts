@@ -15,6 +15,7 @@ import { join } from "node:path";
 import type { RunStatus } from "@safe-upgrade/domain";
 import {
   formatProgress,
+  renderAssessment,
   renderReport,
   runUpgrade,
   type RunOptions,
@@ -27,6 +28,7 @@ import { DeterministicEngine, JevDecisionEngine } from "@safe-upgrade/jev";
 import { PackageResolutionError, RepositoryError } from "@safe-upgrade/domain";
 import { HELP, VERSION } from "./help.ts";
 import { OpenAIPatchGenerator } from "@safe-upgrade/workers";
+import { discoverUpgradeCandidate, type CandidateDiscovery } from "./discovery.ts";
 
 export interface Streams {
   readonly out: (text: string) => void;
@@ -68,31 +70,42 @@ export async function main(argv: readonly string[], streams: Streams): Promise<n
     return 0;
   }
 
-  const choice = chooseAuthorization(streams.env);
-  if (choice.refusal !== undefined) {
-    streams.err(`safe-upgrade: ${choice.refusal}\n`);
-    return EXIT.usage;
-  }
-
   let parsed: ParsedArguments;
   let options: RunOptions;
+  let discovery: CandidateDiscovery | undefined;
   try {
     parsed = parseArguments(argv);
-    options = toRunOptions(parsed, parsed.runId ?? randomUUID(), streams);
+    const choice = chooseAuthorization(streams.env);
+    if (choice.refusal !== undefined) {
+      streams.err(`safe-upgrade: ${choice.refusal}\n`);
+      return EXIT.usage;
+    }
+    const prepared = await toRunOptions(parsed, parsed.runId ?? randomUUID(), streams);
+    options = prepared.options;
+    discovery = prepared.discovery;
     if (choice.authorization !== undefined) {
       options = { ...options, authorization: choice.authorization };
+    }
+    if (choice.warning !== undefined) {
+      // Before the run, not after: it changes how the result should be read.
+      streams.err(`safe-upgrade: ${choice.warning}\n`);
     }
   } catch (error) {
     if (error instanceof UsageError) {
       streams.err(`safe-upgrade: ${error.message}\n`);
       return EXIT.usage;
     }
+    if (isPrecondition(error)) {
+      streams.err(`safe-upgrade: this repository cannot be assessed: ${messageOf(error)}\n`);
+      return EXIT.unusable;
+    }
     throw error;
   }
 
-  if (choice.warning !== undefined) {
-    // Before the run, not after: it changes how the result should be read.
-    streams.err(`safe-upgrade: ${choice.warning}\n`);
+  if (discovery !== undefined) {
+    streams.err(
+      `  selected ${discovery.selected.packageName} ${discovery.selected.currentVersion} -> ${discovery.selected.targetVersion} from ${String(discovery.outdated.length)} outdated direct ${discovery.outdated.length === 1 ? "dependency" : "dependencies"}\n`,
+    );
   }
   if (streams.env["SAFE_UPGRADE_ALLOW_UNSANDBOXED"] === "1") {
     streams.err(
@@ -122,8 +135,11 @@ export async function main(argv: readonly string[], streams: Streams): Promise<n
     return EXIT.internal;
   }
 
-  streams.out(format(report, parsed.format));
-  streams.err(`${summarize(report)}\n`);
+  streams.out(format(report, parsed.format, parsed.mode));
+  streams.err(`${parsed.mode === "assess" ? summarizeAssessment(report) : summarize(report)}\n`);
+  if (parsed.mode === "assess") {
+    return report.result.status === "blocked" ? EXIT.blocked : 0;
+  }
   return exitCodeFor(report, parsed.partialAllowed);
 }
 
@@ -146,18 +162,36 @@ export function summarize(report: RunReport): string {
   return first === undefined ? `${head}${where}` : `${head}${where}\n  ${first}`;
 }
 
-function format(report: RunReport, shape: "markdown" | "json"): string {
-  return shape === "json" ? `${JSON.stringify(report, null, 2)}\n` : `${renderReport(report)}\n`;
+function summarizeAssessment(report: RunReport): string {
+  const findingCount = report.finalState.findings.length;
+  const coverage = report.finalState.testAssessment;
+  return `assessment complete: ${report.request.packageName} ${report.facts.currentVersion} -> ${report.request.targetVersion}\n  ${String(findingCount)} repository-specific ${findingCount === 1 ? "finding" : "findings"}; ${coverage === null ? "no coverage gap to assess" : coverage.sufficient ? "existing verification coverage is sufficient" : "verification gaps were found"}`;
 }
 
-function toRunOptions(
+function format(report: RunReport, shape: "markdown" | "json", mode: "upgrade" | "assess"): string {
+  if (shape === "json") return `${JSON.stringify(report, null, 2)}\n`;
+  return `${mode === "assess" ? renderAssessment(report) : renderReport(report)}\n`;
+}
+
+interface PreparedRun {
+  readonly options: RunOptions;
+  readonly discovery?: CandidateDiscovery;
+}
+
+async function toRunOptions(
   parsed: ParsedArguments,
   runId: string,
   streams: Streams,
-): RunOptions {
+): Promise<PreparedRun> {
   const event = parsed.fromEvent ? readPullRequestEvent(streams.env) : undefined;
-  const packageName = parsed.packageName ?? event?.packageName;
-  const targetVersion = parsed.targetVersion ?? event?.targetVersion;
+  const discovery = parsed.mode === "assess" && parsed.packageName === undefined
+    ? await discoverUpgradeCandidate({
+        repositoryPath: parsed.repositoryPath,
+        ...(parsed.workspace === undefined ? {} : { workspace: parsed.workspace }),
+      })
+    : undefined;
+  const packageName = parsed.packageName ?? event?.packageName ?? discovery?.selected.packageName;
+  const targetVersion = parsed.targetVersion ?? event?.targetVersion ?? discovery?.selected.targetVersion;
   if (packageName === undefined || targetVersion === undefined) {
     throw new UsageError("name the package to upgrade, as name@version");
   }
@@ -188,7 +222,7 @@ function toRunOptions(
     );
   }
 
-  return {
+  const options: RunOptions = {
     engine: buildEngine(parsed, streams),
     ...(parsed.patchModel === undefined || openAiKey === undefined
       ? {}
@@ -199,6 +233,7 @@ function toRunOptions(
     repositoryPath: parsed.repositoryPath,
     packageName,
     targetVersion,
+    ...(parsed.mode === "assess" ? { assessmentOnly: true } : {}),
     companions,
     ...(workspace === undefined || workspace === "" ? {} : { workspace }),
     runId,
@@ -215,6 +250,7 @@ function toRunOptions(
       ? { github: { repository: githubRepository, token } }
       : {}),
   };
+  return { options, ...(discovery === undefined ? {} : { discovery }) };
 }
 
 /**

@@ -5,7 +5,12 @@ export const VERSION = "0.0.0";
 export const HELP = `safe-upgrade: upgrade one dependency, and establish what that did
 
 Usage
+  safe-upgrade assess [name@exact-version] [options]
   safe-upgrade <name>@<exact-version> [options]
+
+Run \`assess\` without a package to select an outdated direct dependency, establish
+the current baseline, research its latest release, and report repository-specific
+risk and test coverage. Assessment does not offer any writing worker.
 
 The version is exact. A range or a tag resolves to whatever the registry serves at the
 time, and every claim a run makes is about one version whose manifest it read.
@@ -70,6 +75,8 @@ Exit codes
   70  the run could not complete
 
 Examples
+  safe-upgrade assess --repository ~/src/app
+  safe-upgrade assess postcss@8.4.35 --repository ~/src/app --engine jev
   safe-upgrade postcss@8.4.35 --repository ~/src/app
   safe-upgrade postcss@8.4.35 --workspace packages/app --companion nanoid@5.0.0
   safe-upgrade postcss@8.4.35 --engine jev --patch-model your-model-id

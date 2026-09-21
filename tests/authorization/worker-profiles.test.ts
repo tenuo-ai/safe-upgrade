@@ -71,6 +71,25 @@ describe("researcher", () => {
 });
 
 describe("test author", () => {
+  it("receives a read-only warrant while assessing existing coverage", async () => {
+    const { broker } = harness.runtime;
+    const capabilities = await broker.withWorker(
+      "test_author",
+      "assess_verification",
+      async (handle) => {
+        await expect(
+          handle.tools.write_test_file({
+            path: harness.path("src", "assessment.test.ts"),
+            ...newFile("test('assessment', () => {});\n"),
+          }),
+        ).rejects.toBeInstanceOf(AuthorizationError);
+        return handle.capabilities;
+      },
+    );
+    expect(capabilities).toEqual(["read_file", "list_files"]);
+    expect(harness.invocations).not.toContain("write_test_file");
+  });
+
   it("writes a test file", async () => {
     const { broker, toolset } = harness.runtime;
     const result = await broker.withWorker("test_author", "author_tests", (handle) =>

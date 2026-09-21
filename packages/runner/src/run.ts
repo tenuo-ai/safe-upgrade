@@ -59,6 +59,8 @@ export interface RunOptions {
   readonly repositoryPath: string;
   readonly packageName: string;
   readonly targetVersion: string;
+  /** Inspect, research, and assess coverage without offering a writing worker. */
+  readonly assessmentOnly?: boolean;
   readonly companions?: readonly { readonly packageName: string; readonly targetVersion: string }[];
   readonly workspace?: string;
   /**
@@ -161,6 +163,8 @@ export interface ProductionAuthorization {
 export interface RunReport {
   readonly runId: string;
   readonly request: UpgradeRequest;
+  /** The checkout supplied by the caller, retained for continuation commands. */
+  readonly sourceRepositoryPath?: string;
   readonly result: FinalResult;
   readonly facts: RepositoryFacts;
   readonly startCommit: string;
@@ -263,7 +267,11 @@ export async function runUpgrade(options: RunOptions): Promise<RunReport> {
       ...(options.patchGenerator === undefined ? {} : { patchGenerator: options.patchGenerator }),
     });
 
-    const routerConfig = { ...DEFAULT_ROUTER, ...options.router };
+    const routerConfig = {
+      ...DEFAULT_ROUTER,
+      ...options.router,
+      ...(options.assessmentOnly === true ? { assessmentOnly: true } : {}),
+    };
     const graph = buildGraph({
       runtime,
       engine: options.engine ?? new DeterministicEngine(),
@@ -331,6 +339,7 @@ export async function runUpgrade(options: RunOptions): Promise<RunReport> {
     const report: RunReport = {
       runId,
       request,
+      sourceRepositoryPath: options.repositoryPath,
       result,
       facts: detection.facts,
       startCommit: isolation.startCommit,
@@ -347,7 +356,10 @@ export async function runUpgrade(options: RunOptions): Promise<RunReport> {
 
     if (artifactsDirectory !== undefined) {
       audit.writeArtifact("result.json", `${JSON.stringify(result, null, 2)}\n`);
-      audit.writeArtifact("report.md", renderReport(report));
+      audit.writeArtifact(
+        "report.md",
+        options.assessmentOnly === true ? renderAssessment(report) : renderReport(report),
+      );
       // Last, and from the worktree before it is released: the diff is the evidence the
       // classification is a summary of.
       writeArtifacts(audit, report, isolation.patch());
@@ -581,4 +593,82 @@ export function renderReport(report: RunReport): string {
     );
   }
   return lines.join("\n");
+}
+
+/** A first-run report that describes risk and the next action without implying a migration ran. */
+export function renderAssessment(report: RunReport): string {
+  const { facts, finalState, request } = report;
+  const sourceRepositoryPath = report.sourceRepositoryPath ?? facts.worktreePath;
+  const lines: string[] = [
+    `# Upgrade assessment for ${request.packageName}`,
+    "",
+    `- Current: \`${facts.currentVersion}\`${
+      facts.declaredRange === facts.currentVersion ? "" : ` (declared \`${facts.declaredRange}\`)`
+    }`,
+    `- Target: \`${request.targetVersion}\``,
+    `- Package manager: ${facts.packageManager}`,
+    `- Repository: ${sourceRepositoryPath} at ${report.startCommit}`,
+    "- Repository files changed: none",
+    "",
+  ];
+
+  const section = (title: string, items: readonly string[]): void => {
+    if (items.length === 0) return;
+    lines.push(`## ${title}`, "", ...items.map((item) => `- ${item}`), "");
+  };
+  const checks = finalState.baselineChecks.map(
+    (check) => `${check.command.purpose}: ${check.outcome}`,
+  );
+  section("Current baseline", checks);
+  section(
+    "Repository-specific findings",
+    finalState.findings.map((finding) => {
+      const files = finding.affectedFiles.length === 0
+        ? "no affected files found"
+        : `affects ${finding.affectedFiles.map((path) => `\`${path}\``).join(", ")}`;
+      return `${finding.releaseClaim}; ${files}. Required response: ${finding.requiredChange}`;
+    }),
+  );
+  if (finalState.findings.length === 0) {
+    lines.push(
+      "## Repository-specific findings",
+      "",
+      "- No migration finding was established from the available package and repository evidence.",
+      "",
+    );
+  }
+  if (finalState.testAssessment !== null) {
+    section("Existing verification coverage", [
+      `${finalState.testAssessment.sufficient ? "Sufficient" : "Gaps found"}: ${finalState.testAssessment.rationale}`,
+    ]);
+  }
+  section("Uncertainty to review", finalState.highSeverityUncertainty);
+
+  const delegations = report.events.filter((event) => event.type === "session_delegated");
+  const boundaries = delegations.map((event) => {
+    const capabilities = event.payload["capabilities"];
+    const held = Array.isArray(capabilities) ? capabilities.join(", ") : "no capabilities recorded";
+    return `${event.worker ?? "worker"}: ${held}`;
+  });
+  section("Tenuo warrant boundaries used", [...new Set(boundaries)]);
+
+  const workspace = request.workspace === "" ? "" : ` --workspace ${shellQuote(request.workspace)}`;
+  lines.push(
+    "## Continue with the upgrade",
+    "",
+    "```bash",
+    `pnpm safe-upgrade ${shellQuote(`${request.packageName}@${request.targetVersion}`)} --repository ${shellQuote(sourceRepositoryPath)}${workspace}`,
+    "```",
+    "",
+    "The upgrade will run in another disposable worktree and ask for approval if a step needs authority outside its worker's warrant.",
+    "",
+  );
+  if (report.artifactsDirectory !== undefined) {
+    lines.push("## Evidence", "", `- Full record: \`${report.artifactsDirectory}\``, "");
+  }
+  return lines.join("\n");
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
 }

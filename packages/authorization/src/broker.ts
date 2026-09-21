@@ -150,8 +150,14 @@ export class DelegationBroker {
     options: WithWorkerOptions = {},
   ): Promise<T> {
     const profile = this.profiles[worker];
+    const standing = phase === "assess_verification"
+      ? readOnlyAssessment(profile.allow)
+      : profile.allow;
+    const rationale = phase === "assess_verification"
+      ? "Assesses existing verification coverage. Holds read access only."
+      : profile.rationale;
     const elevations = this.elevate(worker, phase, options.elevations ?? []);
-    const { allow, granted: elevated } = this.narrowable(worker, phase, profile.allow, elevations);
+    const { allow, granted: elevated } = this.narrowable(worker, phase, standing, elevations);
     const capabilities = Object.keys(allow) as Capability[];
     const childSession = this.tenuo.narrow(this.parentSession, allow, {
       // Every worker is a leaf. No worker spawns anything, so none of them needs
@@ -176,7 +182,7 @@ export class DelegationBroker {
         parentDigest: sessionDigest(this.parentSession),
         capabilities,
         ttlSeconds: profile.ttlSeconds,
-        rationale: profile.rationale,
+        rationale,
         elevatedCapabilities: elevated,
         depth: granted.depth,
         terminal: granted.terminal,
@@ -440,4 +446,14 @@ export class DelegationBroker {
       throw error;
     }
   }
+}
+
+/** The coverage assessment phase reads tests and source but cannot author either. */
+function readOnlyAssessment(standing: SessionAllow): SessionAllow {
+  return Object.fromEntries(
+    ["read_file", "list_files"].flatMap((capability) => {
+      const policy = standing[capability];
+      return policy === undefined ? [] : [[capability, policy]];
+    }),
+  ) as SessionAllow;
 }

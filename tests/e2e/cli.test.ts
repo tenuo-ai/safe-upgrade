@@ -10,7 +10,7 @@
  * Getting it backwards would mean a saved report with a warning glued to the top of it.
  */
 
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -41,28 +41,23 @@ interface Invocation {
 
 function run(args: readonly string[], env: Readonly<Record<string, string>> = {}): Invocation {
   const sandboxTestOverride = process.env["SAFE_UPGRADE_ALLOW_UNSANDBOXED"];
-  try {
-    const stdout = execFileSync(process.execPath, ["--no-warnings", BIN, ...args], {
-      encoding: "utf8",
-      env: {
-        PATH: process.env["PATH"] ?? "",
-        HOME: process.env["HOME"] ?? "",
-        ...(sandboxTestOverride === undefined
-          ? {}
-          : { SAFE_UPGRADE_ALLOW_UNSANDBOXED: sandboxTestOverride }),
-        ...env,
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    return { status: 0, stdout, stderr: "" };
-  } catch (error) {
-    const failure = error as { status?: number; stdout?: string; stderr?: string };
-    return {
-      status: failure.status ?? -1,
-      stdout: failure.stdout ?? "",
-      stderr: failure.stderr ?? "",
-    };
-  }
+  const result = spawnSync(process.execPath, ["--no-warnings", BIN, ...args], {
+    encoding: "utf8",
+    env: {
+      PATH: process.env["PATH"] ?? "",
+      HOME: process.env["HOME"] ?? "",
+      ...(sandboxTestOverride === undefined
+        ? {}
+        : { SAFE_UPGRADE_ALLOW_UNSANDBOXED: sandboxTestOverride }),
+      ...env,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  return {
+    status: result.status ?? -1,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  };
 }
 
 describeE2E("the safe-upgrade binary", () => {
@@ -151,6 +146,46 @@ describeE2E("the safe-upgrade binary", () => {
     });
 
     it("left the repository it was pointed at untouched", () => {
+      expect(repo.status()).toBe("");
+      expect(repo.git(["rev-parse", "HEAD"])).toBe(repo.headCommit);
+    });
+  });
+
+  describe("a first-run assessment", () => {
+    let repo: FixtureRepo;
+    let artifacts: string;
+    let invocation: Invocation;
+
+    beforeAll(() => {
+      repo = createFixtureRepo();
+      artifacts = mkdtempSync(join(tmpdir(), "safe-upgrade-cli-assess-"));
+      invocation = run(
+        ["assess", "--repository", repo.path, "--artifacts", artifacts],
+        { NODE_ENV: "development" },
+      );
+    }, 600_000);
+
+    afterAll(() => {
+      repo.cleanup();
+      rmSync(artifacts, { recursive: true, force: true });
+    });
+
+    it("selects an outdated direct dependency and exits successfully", () => {
+      expect(invocation.status).toBe(0);
+      expect(invocation.stderr).toMatch(/selected escape-string-regexp 4\.0\.0 -> 5\.0\.0/);
+      expect(invocation.stderr).toMatch(/assessment complete/);
+    });
+
+    it("prints risk, coverage, warrant boundaries, and the continuation", () => {
+      expect(invocation.stdout).toMatch(/^# Upgrade assessment for escape-string-regexp/m);
+      expect(invocation.stdout).toMatch(/Repository-specific findings/);
+      expect(invocation.stdout).toMatch(/Existing verification coverage/);
+      expect(invocation.stdout).toMatch(/Tenuo warrant boundaries used/);
+      expect(invocation.stdout).not.toMatch(/test_author:.*write_test_file/);
+      expect(invocation.stdout).toContain(`--repository '${repo.path}'`);
+    });
+
+    it("leaves the repository untouched", () => {
       expect(repo.status()).toBe("");
       expect(repo.git(["rev-parse", "HEAD"])).toBe(repo.headCommit);
     });

@@ -26,8 +26,29 @@ function parse(...argv: readonly string[]) {
 }
 
 describe("naming what to upgrade", () => {
+  it("accepts an assessment with automatic package selection", () => {
+    const parsed = parse("assess");
+    expect(parsed.mode).toBe("assess");
+    expect(parsed.packageName).toBeUndefined();
+  });
+
+  it("accepts an assessment of an explicitly named target", () => {
+    const parsed = parse("assess", "postcss@8.4.35");
+    expect(parsed.mode).toBe("assess");
+    expect(parsed.packageName).toBe("postcss");
+    expect(parsed.targetVersion).toBe("8.4.35");
+  });
+
+  it("does not accept mutation or publishing options in assessment mode", () => {
+    expect(() => parse("assess", "p@1.0.0", "--draft-pr")).toThrow(/does not make or publish/);
+    expect(() => parse("assess", "p@1.0.0", "--companion", "q@2.0.0")).toThrow(
+      /does not make or publish/,
+    );
+  });
+
   it("reads a package and an exact version", () => {
     const parsed = parse("postcss@8.4.35");
+    expect(parsed.mode).toBe("upgrade");
     expect(parsed.packageName).toBe("postcss");
     expect(parsed.targetVersion).toBe("8.4.35");
   });

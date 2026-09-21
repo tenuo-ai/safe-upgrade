@@ -23,17 +23,29 @@ git clone https://github.com/tenuo-ai/safe-upgrade.git
 cd safe-upgrade
 pnpm install
 
-NODE_ENV=development pnpm safe-upgrade postcss@8.4.35 \
+NODE_ENV=development pnpm safe-upgrade assess \
   --repository ~/src/app
 ```
 
-The target must be an exact version. Progress is written to stderr, the report
-to stdout, and the full run record to `artifacts/<run-id>`.
+The assessment selects an outdated direct dependency and shows the
+repository-specific risk, affected files, existing verification coverage, and
+the Tenuo warrant used by each specialist. It does not offer any writing worker
+and finishes with a command you can copy to continue the upgrade.
+
+You can also assess a specific target:
+
+```bash
+NODE_ENV=development pnpm safe-upgrade assess postcss@8.4.35 \
+  --repository ~/src/app
+```
+
+Targets are always exact versions. Progress is written to stderr, the report to
+stdout, and the full run record to `artifacts/<run-id>`.
 
 For JSON output:
 
 ```bash
-NODE_ENV=development pnpm safe-upgrade postcss@8.4.35 \
+NODE_ENV=development pnpm safe-upgrade assess postcss@8.4.35 \
   --repository ~/src/app \
   --format json \
   --quiet > report.json

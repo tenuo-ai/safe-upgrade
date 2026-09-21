@@ -22,6 +22,8 @@ import {
 export interface EligibilityConfig {
   readonly maxWorkerAttempts: number;
   readonly maxGraphSteps: number;
+  /** Stop after read-only coverage assessment. Writing workers are never eligible. */
+  readonly assessmentOnly?: boolean;
 }
 
 interface Rule {
@@ -214,6 +216,13 @@ export function eligibleActions(
 
   for (const rule of RULES) {
     if (!legal.has(rule.action)) {
+      continue;
+    }
+    if (
+      config.assessmentOnly === true &&
+      rule.action !== "assess_verification" &&
+      rule.action !== "finalize"
+    ) {
       continue;
     }
     const worker = ACTION_WORKER[rule.action];

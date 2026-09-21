@@ -21,6 +21,7 @@ import { isAbsolute, resolve } from "node:path";
 import type { ElevationGrant } from "@safe-upgrade/domain";
 
 export interface ParsedArguments {
+  readonly mode: "upgrade" | "assess";
   readonly repositoryPath: string;
   readonly packageName: string | undefined;
   readonly targetVersion: string | undefined;
@@ -133,17 +134,20 @@ export function parseArguments(argv: readonly string[], now: () => Date = () => 
     }
   }
 
-  if (positional.length === 0 && !flags.has("--from-event")) {
+  const mode = positional[0] === "assess" ? "assess" : "upgrade";
+  const targets = mode === "assess" ? positional.slice(1) : positional;
+
+  if (targets.length === 0 && mode === "upgrade" && !flags.has("--from-event")) {
     throw new UsageError("name the package to upgrade, as name@version");
   }
-  if (positional.length > 1) {
+  if (targets.length > 1) {
     throw new UsageError(
-      `one positional package, and ${String(positional.length)} were given. Further packages belong on --companion name@version.`,
+      `one positional package, and ${String(targets.length)} were given. Further packages belong on --companion name@version.`,
     );
   }
 
   const named =
-    positional.length === 1 ? parseSpecifier(positional[0] ?? "") : { packageName: undefined, targetVersion: undefined };
+    targets.length === 1 ? parseSpecifier(targets[0] ?? "") : { packageName: undefined, targetVersion: undefined };
   const companions = companionSpecs.map((spec) => parseSpecifier(spec));
   if (companions.length > 8) {
     throw new UsageError("--companion accepts at most 8 further packages");
@@ -158,6 +162,21 @@ export function parseArguments(argv: readonly string[], now: () => Date = () => 
   const workspaceRaw = values.get("--workspace");
   const workspace = workspaceRaw === undefined ? undefined : normalizeWorkspaceFlag(workspaceRaw);
   const approvals = buildApprovals(approveIds, values.get("--approved-by"), now);
+
+  if (mode === "assess") {
+    const incompatible = [
+      ...(approveIds.length > 0 ? ["--approve"] : []),
+      ...(companionSpecs.length > 0 ? ["--companion"] : []),
+      ...(flags.has("--draft-pr") ? ["--draft-pr"] : []),
+      ...(flags.has("--publish") ? ["--publish"] : []),
+      ...(flags.has("--from-event") ? ["--from-event"] : []),
+      ...(values.has("--comment-pr") ? ["--comment-pr"] : []),
+      ...(values.has("--patch-model") ? ["--patch-model"] : []),
+    ];
+    if (incompatible.length > 0) {
+      throw new UsageError(`assess does not make or publish changes, so it does not accept ${incompatible.join(", ")}`);
+    }
+  }
 
   const githubRepository = values.get("--github-repository");
   if (githubRepository !== undefined && !GITHUB_REPOSITORY.test(githubRepository)) {
@@ -212,6 +231,7 @@ export function parseArguments(argv: readonly string[], now: () => Date = () => 
 
   const artifacts = values.get("--artifacts");
   return {
+    mode,
     repositoryPath: resolve(values.get("--repository") ?? process.cwd()),
     packageName: named.packageName,
     targetVersion: named.targetVersion,
