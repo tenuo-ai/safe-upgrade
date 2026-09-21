@@ -16,9 +16,11 @@ the last commit, not about the files you have open.
 
 ## Specialists, not one agent
 
-The run is a sequence of specialists. Each one is handed the same tools.
-What differs is the permission it holds for that step. A specialist that
-calls a tool it does not hold is denied before the tool body runs.
+The run is a sequence of specialists coordinated by LangGraph. Jev can choose
+the next eligible specialist and answer bounded semantic questions. Before each
+specialist acts, Tenuo issues it a warrant scoped to the tools and arguments it
+needs for that step. Calls outside that warrant are denied before the tool body
+runs.
 
 | Specialist | What it does | What it cannot do |
 | --- | --- | --- |
@@ -35,10 +37,10 @@ caught it. The implementer cannot weaken that test. The verifier cannot
 adjust what it is verifying. No specialist can turn on dependency lifecycle
 scripts.
 
-Tenuo restricts the tool calls made by each specialist. A separate operating
-system sandbox restricts code launched by those tools. Package downloads may
-use the network, while probes and repository checks cannot. Child processes see
-a temporary empty home instead of the user's credentials and can write only to
+The warrants constrain delegated tool calls. A separate operating system
+sandbox restricts code launched by those tools. Package downloads may use the
+network, while probes and repository checks cannot. Child processes see a
+temporary empty home instead of the user's credentials and can write only to
 the disposable worktree and scratch directory. The run fails closed if that
 sandbox is unavailable.
 
@@ -88,21 +90,20 @@ Anything short of that is `partial`, `blocked`, `human_required`, or
 
 ## Approvals
 
-A few writes belong to an upgrade and are still not in any specialist's
-standing permission. Setting `package.json`'s `"type"` to `"module"` is the
-one that comes up: the implementer records an id, writes nothing, and the
-run exits `human_required`.
+A few writes belong to an upgrade and still fall outside the specialists'
+initial warrants. Setting `package.json`'s `"type"` to `"module"` is the one
+that comes up: the implementer records an id, writes nothing, and the run exits
+`human_required`.
 
-`--approve <id> --approved-by <who>` on the next command permits that one
-call — that field, that value, that file, that worker. It does not grant
-the capability in general.
+`--approve <id> --approved-by <who>` on the next command extends the warrant for
+that one call, bound to that field, value, file, and worker.
 
 ## Drafts and comments
 
-`--draft-pr` is offered only after verification. The draft flag is part of
-the permission, not a courtesy in the GitHub client. `--from-event` comments
-on an existing Dependabot pull request for every status, including `blocked`
-and `human_required`, because those runs never reach the publisher.
+`--draft-pr` is offered only after verification. The publisher's warrant
+includes the draft flag and the exact run branch. `--from-event` comments on an
+existing Dependabot pull request for every status, including `blocked` and
+`human_required`, because those runs never reach the publisher.
 
 ## Who chooses the next step
 
@@ -124,8 +125,8 @@ deterministic engine keeps all repository source local.
 
 ## Authority for the process itself
 
-Locally, `NODE_ENV=development` lets this process mint the permission it
-then narrows for each specialist. The command says so on stderr. In
-production, `TENUO_ROOT_PUBLIC_KEY`, `TENUO_RUN_WARRANT`, and
+Locally, `NODE_ENV=development` lets this process mint the run warrant it then
+narrows for each specialist. The command says so on stderr. In production,
+`TENUO_ROOT_PUBLIC_KEY`, `TENUO_RUN_WARRANT`, and
 `TENUO_RUN_HOLDER_SECRET` must all be set: the process narrows a warrant
 someone else issued, and cannot grant itself one.

@@ -12,8 +12,9 @@ the work raises another concrete question: which files, commands, network
 connections, and Git operations were each agent allowed to use?
 
 The run applies the changes it can justify and produces an evidence-backed
-result. It is also a working example of safe agent delegation with LangGraph,
-Jev, and Tenuo.
+result. Under the hood, LangGraph coordinates the workflow. Jev handles bounded
+decisions when enabled. Tenuo warrants set the boundaries for each delegated
+step.
 
 ## What happens during an upgrade
 
@@ -31,9 +32,11 @@ A run follows the same path you would want from a careful engineer:
    and account for every finding.
 7. Save the report, evidence, route history, and authorization events for review.
 
-Each step belongs to a specialist with a narrow Tenuo capability. LangGraph
-coordinates the workflow. Jev can make bounded semantic judgements about test
-coverage, migration completeness, and the next eligible action.
+LangGraph coordinates the sequence of specialists and carries the run state
+between them. Jev can make bounded semantic judgements about test coverage,
+migration completeness, and the next eligible action. Before a specialist acts,
+it receives a Tenuo warrant scoped to the tools and arguments needed for that
+step.
 
 The result is a patch you can inspect and a clear explanation of what the run
 established. `safe-upgrade` leaves merging and release decisions with your
@@ -88,7 +91,7 @@ The status answers a practical question: how much confidence did the run earn?
 | `verified` | 0 | The exact target is installed, required checks pass, the diff satisfies policy, and every finding has verification. |
 | `partial` | 2 | The run established part of the result and records the remaining gaps. `--partial-allowed` accepts this status with exit 0. |
 | `human_required` | 3 | A specific change needs explicit approval. The report includes an approval id. |
-| `blocked` | 4 | Available evidence or capabilities are insufficient to complete the upgrade safely. |
+| `blocked` | 4 | Available evidence or delegated authority is insufficient to complete the upgrade safely. |
 | `indeterminate` | 5 | The run could not classify the outcome. Treat the upgrade as unverified. |
 | `usage` | 64 | The command arguments are invalid. |
 | `unusable` | 65 | The repository does not meet a run precondition, such as having one supported lockfile. |
@@ -115,10 +118,11 @@ pnpm safe-upgrade cookie@1.0.2 \
   --engine jev
 ```
 
-Jev chooses from actions already made eligible by trusted workflow code. Tenuo
-continues to enforce the specialist, tool, path, and argument boundaries. A
-low-confidence routing answer falls back to the deterministic order. Configure
-the threshold with `--confidence`, whose default is `0.6`.
+Jev chooses from actions already made eligible by trusted workflow code. Once
+an action is selected, its specialist operates under a Tenuo warrant scoped to
+the allowed tools, paths, and arguments. A low-confidence routing answer falls
+back to the deterministic order. Configure the threshold with `--confidence`,
+whose default is `0.6`.
 
 Semantic assessment sends bounded excerpts from relevant tests and changed-file
 patches to the configured Jev API. The request excludes process environment
@@ -152,7 +156,7 @@ Two fixtures make useful first examples:
 
 ## Approving a sensitive change
 
-Some changes sit outside every specialist's standing authority. Setting
+Some changes fall outside the specialists' initial warrants. Setting
 `package.json` to `"type": "module"` is one example. The first run returns
 `human_required` with an approval id and leaves that change pending.
 
@@ -188,7 +192,7 @@ dependencies outside the named upgrade set are reported for human review.
 ### Open a draft pull request
 
 After a verified run, `--draft-pr` pushes the run branch and opens a draft pull
-request. The publisher capability is scoped to that branch and draft operation.
+request. The publisher's warrant is scoped to that branch and draft operation.
 Provide `GITHUB_TOKEN` or `GH_TOKEN` through the environment.
 
 ```bash
@@ -218,9 +222,9 @@ for a manually triggered draft upgrade.
 
 ## How repository code is contained
 
-Tenuo controls which operations each specialist can request. An operating
-system sandbox contains the package and repository code launched by those
-operations.
+Each specialist receives a Tenuo warrant that defines which operations it can
+request and the arguments it can use. An operating system sandbox contains the
+package and repository code launched by those operations.
 
 - Package downloads have network access with lifecycle scripts disabled.
 - Tests, builds, typechecks, and package surface probes run without network
