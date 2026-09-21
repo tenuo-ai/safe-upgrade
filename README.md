@@ -12,9 +12,23 @@ the work raises another concrete question: which files, commands, network
 connections, and Git operations were each agent allowed to use?
 
 The run applies the changes it can justify and produces an evidence-backed
-result. Under the hood, LangGraph coordinates the workflow. Jev handles bounded
-decisions when enabled. Tenuo warrants set the boundaries for each delegated
-step.
+result. It combines workflow orchestration, semantic review, code generation,
+and enforceable delegation because each solves a different part of the upgrade.
+
+## Why each tool is here
+
+| Tool | Role in the upgrade |
+| --- | --- |
+| **LangGraph** | Carries the run state through inspection, research, test authoring, implementation, verification, and publishing. It controls which specialist is eligible to act next and keeps retries within a fixed attempt budget. |
+| **Jev** | Makes bounded semantic judgements that rules and exit codes cannot answer, such as whether a test covers the reported break and whether the final patch accounts for every finding. |
+| **Coding model** | Proposes repository-specific behavioral tests and source changes when a built-in migration is insufficient. It returns structured patches and receives no tools or warrant. |
+| **Tenuo** | Gives each specialist a separate warrant for its step. The test author can write tests, the implementer can write production source, the verifier can inspect and run checks, and the publisher can create a draft from the run branch. |
+
+These roles meet at the point where most agent demos rely on prompt discipline.
+The coding model can suggest a change, but a trusted specialist validates the
+proposal and applies it through a Tenuo-protected tool. Jev reviews what the
+change means. LangGraph decides what work follows. The repository's own checks
+and deterministic policy decide whether the result can be called `verified`.
 
 ## What happens during an upgrade
 
@@ -33,15 +47,27 @@ A run follows the same path you would want from a careful engineer:
    and account for every finding.
 7. Save the report, evidence, route history, and authorization events for review.
 
-LangGraph coordinates the sequence of specialists and carries the run state
-between them. Jev can make bounded semantic judgements about test coverage,
-migration completeness, and the next eligible action. Before a specialist acts,
-it receives a Tenuo warrant scoped to the tools and arguments needed for that
-step.
-
 The result is a patch you can inspect and a clear explanation of what the run
 established. `safe-upgrade` leaves merging and release decisions with your
 normal review process.
+
+For example, with Jev and a patch model enabled, an upgrade that removes an API
+used by the repository follows this flow:
+
+1. The researcher records the removed API, supporting release evidence, and
+   affected files.
+2. The coding model proposes a behavioral test. The test author validates and
+   writes it using a warrant limited to test files.
+3. Jev assesses whether that test exercises the reported break.
+4. The coding model proposes the source migration. The implementer validates
+   and writes it using a separate warrant limited to production source.
+5. LangGraph advances the run to independent verification, where the updated
+   dependency is installed and the repository's checks are rerun.
+
+This separation makes the architecture visible in the resulting audit trail:
+who proposed each change, which specialist applied it, what warrant bounded the
+step, what evidence informed the decision, and which checks established the
+final result.
 
 ## Quick start
 
@@ -101,7 +127,7 @@ The status answers a practical question: how much confidence did the run earn?
 The Markdown and JSON reports include findings, check results, changed files,
 remaining uncertainty, and paths to the supporting evidence.
 
-## Where Jev adds judgement
+## Jev: semantic review inside a bounded workflow
 
 The default engine follows a deterministic action order. Add `--engine jev` to
 use Jev for questions that benefit from semantic reasoning:
@@ -131,7 +157,7 @@ variables, credentials, warrants, command output, unrelated tests, and complete
 repository files. Choose the deterministic engine when repository source must
 stay local.
 
-## Generate a repository-specific migration
+## Coding model: repository-specific tests and migrations
 
 Use `--patch-model` when an upgrade needs more than one of the built-in edits.
 The coding model receives the affected source files, relevant release evidence,
@@ -160,6 +186,23 @@ This mode sends the selected source and test files to the OpenAI Responses API.
 Responses are requested with storage disabled. `--patch-model` requires
 `--engine jev`, so generated code does not bypass the semantic review that gives
 the multi-agent workflow its purpose.
+
+## Tenuo: boundaries on every delegated step
+
+Tenuo controls what each specialist can ask the system to do. A warrant names
+the available tool and constrains its arguments, including paths, commands,
+package names, versions, branches, and publication mode. Calls outside those
+bounds are denied before the underlying operation runs.
+
+The separation is deliberate. The worker that writes a behavioral test cannot
+also rewrite production source to satisfy it. The implementer cannot weaken the
+test. The verifier can run checks and inspect the diff, but cannot repair the
+candidate it is judging. The publisher receives authority for the exact run
+branch and a draft pull request, without merge authority.
+
+Tenuo warrants govern delegated operations. The operating system sandbox adds a
+second boundary around package and repository code executed during installation
+and verification.
 
 ## Supported changes
 
