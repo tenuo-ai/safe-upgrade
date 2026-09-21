@@ -1,12 +1,17 @@
 # safe-upgrade
 
-Dependency upgrades are easy to start and surprisingly hard to trust. A green
-install says the package resolved. It does not tell you whether a removed API is
-still used, whether the relevant code was tested, or whether the upgrade process
-had more access than it needed.
+`safe-upgrade` is an agentic dependency-upgrade workflow for JavaScript and
+TypeScript repositories. Point it at a repository and an exact package version.
+It inspects the codebase, researches the release, prepares the migration in an
+isolated worktree, and verifies the result against the repository's own checks.
 
-`safe-upgrade` investigates one exact JavaScript or TypeScript dependency
-upgrade, applies the changes it can justify, and produces an evidence-backed
+Changing a package entry is easy. Establishing that the upgrade is safe is the
+hard part. A green install leaves open whether the repository still uses a
+removed API and whether the relevant behavior was actually tested. Automating
+the work raises another concrete question: which files, commands, network
+connections, and Git operations were each agent allowed to use?
+
+The run applies the changes it can justify and produces an evidence-backed
 result. It is also a working example of safe agent delegation with LangGraph,
 Jev, and Tenuo.
 
