@@ -3,6 +3,10 @@
 # This is the scheduled / "new version exists" path. Name the package and version
 # yourself (or have something else resolve "latest" to an exact version first).
 # A range is refused: every claim a run makes is about one version it read.
+#
+# This copyable example uses safe-upgrade's explicit self-authorized trial mode.
+# For production, remove NODE_ENV and supply TENUO_ROOT_PUBLIC_KEY,
+# TENUO_RUN_WARRANT, and TENUO_RUN_HOLDER_SECRET from your warrant issuer.
 
 name: Draft a known upgrade
 
@@ -20,16 +24,18 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "22.18"
 
       - name: Upgrade and open a draft if verified
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_ENV: development
+          TARGET_PACKAGE: ${{ inputs.package }}
         run: |
-          safe-upgrade "${{ inputs.package }}" --draft-pr --quiet
-        # Until the CLI is on PATH:
-        # node --experimental-strip-types "$SAFE_UPGRADE/packages/cli/bin/safe-upgrade.mjs" "${{ inputs.package }}" --draft-pr --quiet
+          npx --yes @tenuo/safe-upgrade@0.1.0 "$TARGET_PACKAGE" --draft-pr --quiet

@@ -9,8 +9,9 @@
 # and human_required. `--draft-pr` is optional: add it when you also want a
 # branch that carries any extra files this run wrote (tests, a workflow).
 #
-# The CLI is not published to npm yet. Point `SAFE_UPGRADE` at a checkout of
-# this repository, or put `safe-upgrade` on PATH once it is.
+# This copyable example uses safe-upgrade's explicit self-authorized trial mode.
+# For production, remove NODE_ENV and supply TENUO_ROOT_PUBLIC_KEY,
+# TENUO_RUN_WARRANT, and TENUO_RUN_HOLDER_SECRET from your warrant issuer.
 
 name: Assess Dependabot upgrade
 
@@ -27,19 +28,19 @@ jobs:
       pull-requests: write
     steps:
       - name: Checkout the base, so the upgrade has somewhere to go
-        uses: actions/checkout@v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ github.event.pull_request.base.ref }}
+          persist-credentials: false
 
       - name: Use Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "22.18"
 
       - name: Assess the bump and comment
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_ENV: development
         run: |
-          safe-upgrade --from-event --quiet --format json
-        # Until the CLI is on PATH:
-        # node --experimental-strip-types "$SAFE_UPGRADE/packages/cli/bin/safe-upgrade.mjs" --from-event --quiet --format json
+          npx --yes @tenuo/safe-upgrade@0.1.0 --from-event --quiet --format json
