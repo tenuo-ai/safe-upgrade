@@ -1,23 +1,52 @@
 # safe-upgrade
 
-Upgrade one exact dependency in a JavaScript or TypeScript repository, and
-establish what that did. The run isolates a worktree, reads the two published
-versions, changes only what it can justify, verifies from a frozen install, and
-says so when it cannot finish.
+Dependency upgrades are easy to start and surprisingly hard to trust. A green
+install says the package resolved. It does not tell you whether a removed API is
+still used, whether the relevant code was tested, or whether the upgrade process
+had more access than it needed.
 
-It does not merge. It does not publish. A version that is a range or a tag is
-refused: every claim is about one version whose manifest it read.
+`safe-upgrade` investigates one exact JavaScript or TypeScript dependency
+upgrade, applies the changes it can justify, and produces an evidence-backed
+result. It is also a working example of safe agent delegation with LangGraph,
+Jev, and Tenuo.
 
-The CLI is not on npm yet. Run it from this checkout.
+## What happens during an upgrade
 
-## Requirements
+A run follows the same path you would want from a careful engineer:
 
-- Node 22.18 or newer (the binary loads TypeScript sources)
-- macOS with `/usr/bin/sandbox-exec`, or Linux with Bubblewrap installed at
+1. Inspect the repository, dependency declaration, lockfile, workspaces, tests,
+   and CI configuration.
+2. Record a baseline with a frozen install and the repository's existing checks.
+3. Compare the installed and target package surfaces and read available release
+   guidance.
+4. Work in a temporary git worktree while the source checkout stays untouched.
+5. Add focused tests when an affected path lacks coverage, then apply supported
+   source and dependency changes.
+6. Install from the updated lockfile, rerun the checks, inspect the final diff,
+   and account for every finding.
+7. Save the report, evidence, route history, and authorization events for review.
+
+Each step belongs to a specialist with a narrow Tenuo capability. LangGraph
+coordinates the workflow. Jev can make bounded semantic judgements about test
+coverage, migration completeness, and the next eligible action.
+
+The result is a patch you can inspect and a clear explanation of what the run
+established. `safe-upgrade` leaves merging and release decisions with your
+normal review process.
+
+## Quick start
+
+The CLI currently runs from this checkout.
+
+### Requirements
+
+- Node 22.18 or newer
+- pnpm
+- macOS with `/usr/bin/sandbox-exec`, or Linux with Bubblewrap at
   `/usr/bin/bwrap`
-- A git repository with exactly one of `package-lock.json`, `pnpm-lock.yaml`, or `yarn.lock`
-- The package is a direct dependency of the root or of one workspace
-- `NODE_ENV=development` for a local trial without a Tenuo warrant
+- A git repository with one supported lockfile: `package-lock.json`,
+  `pnpm-lock.yaml`, or `yarn.lock`
+- A target package declared directly by the root project or a workspace
 
 ```bash
 git clone https://github.com/tenuo-ai/safe-upgrade.git
@@ -25,41 +54,102 @@ cd safe-upgrade
 pnpm install
 ```
 
-## Run an upgrade
-
-Name the package and an exact version. The repository is read, never written;
-work happens in a temporary worktree.
+Run a local trial by naming the dependency and its exact target version:
 
 ```bash
-NODE_ENV=development pnpm safe-upgrade postcss@8.4.35 --repository ~/src/app
+NODE_ENV=development pnpm safe-upgrade postcss@8.4.35 \
+  --repository ~/src/app
 ```
 
-Progress goes to stderr. The report goes to stdout, so this stays pipeable:
+Progress appears on stderr. The report appears on stdout, which makes JSON
+output easy to pipe into another tool:
 
 ```bash
-NODE_ENV=development pnpm safe-upgrade postcss@8.4.35 --repository ~/src/app --format json --quiet > report.json
+NODE_ENV=development pnpm safe-upgrade postcss@8.4.35 \
+  --repository ~/src/app \
+  --format json \
+  --quiet > report.json
 ```
 
-A record of the run lands in `artifacts/<run-id>` unless you pass `--artifacts`.
+Run artifacts are stored in `artifacts/<run-id>` by default. Use `--artifacts`
+to choose another location.
 
-### What you will see
+## Reading the result
+
+The status answers a practical question: how much confidence did the run earn?
 
 | Status | Exit | Meaning |
-| --- | --- | --- |
-| `verified` | 0 | The target is installed, the checks that already existed still pass, and every finding is accounted for. |
-| `partial` | 2 | Some of that is true. `--partial-allowed` makes this exit 0. |
-| `human_required` | 3 | A change needs a capability no worker holds. Re-run with `--approve`. |
-| `blocked` | 4 | The run will not make the change. The report names the symbol, the files, and what to look at. |
-| `indeterminate` | 5 | It could not classify the result. Treat it as unverified. |
-| *(usage)* | 64 | The command line could not be understood. |
-| *(unusable)* | 65 | This repository cannot be upgraded by this run — no lockfile, not a direct dependency, or the installed version cannot be determined. |
-| *(internal)* | 70 | The run could not complete. |
+| --- | ---: | --- |
+| `verified` | 0 | The exact target is installed, required checks pass, the diff satisfies policy, and every finding has verification. |
+| `partial` | 2 | The run established part of the result and records the remaining gaps. `--partial-allowed` accepts this status with exit 0. |
+| `human_required` | 3 | A specific change needs explicit approval. The report includes an approval id. |
+| `blocked` | 4 | Available evidence or capabilities are insufficient to complete the upgrade safely. |
+| `indeterminate` | 5 | The run could not classify the outcome. Treat the upgrade as unverified. |
+| `usage` | 64 | The command arguments are invalid. |
+| `unusable` | 65 | The repository does not meet a run precondition, such as having one supported lockfile. |
+| `internal` | 70 | The run itself could not complete. |
 
-## When a person has to approve
+The Markdown and JSON reports include findings, check results, changed files,
+remaining uncertainty, and paths to the supporting evidence.
 
-Some upgrades need `package.json`'s `"type": "module"`. No worker holds that
-capability. The first run stops at `human_required`, writes nothing, and prints
-an approval id.
+## Where Jev adds judgement
+
+The default engine follows a deterministic action order. Add `--engine jev` to
+use Jev for questions that benefit from semantic reasoning:
+
+- Does an existing test actually exercise the breaking behavior described by a
+  finding?
+- Does the candidate patch address every migration finding?
+- Which currently eligible specialist should act next?
+
+```bash
+TYPESAFE_API_KEY=your-key \
+NODE_ENV=development \
+pnpm safe-upgrade cookie@1.0.2 \
+  --repository ~/src/app \
+  --engine jev
+```
+
+Jev chooses from actions already made eligible by trusted workflow code. Tenuo
+continues to enforce the specialist, tool, path, and argument boundaries. A
+low-confidence routing answer falls back to the deterministic order. Configure
+the threshold with `--confidence`, whose default is `0.6`.
+
+Semantic assessment sends bounded excerpts from relevant tests and changed-file
+patches to the configured Jev API. The request excludes process environment
+variables, credentials, warrants, command output, unrelated tests, and complete
+repository files. Choose the deterministic engine when repository source must
+stay local.
+
+## Supported changes
+
+The current implementation handles a deliberately focused set of migrations:
+
+- Move one or more named direct dependencies to exact versions and refresh the
+  lockfile.
+- Convert CommonJS callers and tests when a target becomes ESM-only.
+- Rename a removed export when the new package surface and release guidance
+  agree on the replacement.
+- Add focused load tests for Node test, Vitest, Jest, or Mocha repositories.
+- Add a new CI workflow that runs the checks established during verification.
+
+When the evidence does not support a mechanical edit, the run records the
+affected symbols, files, and missing decision for a person. Existing workflows
+and ambiguous API replacements stay in the review path. Dependency lifecycle
+scripts remain disabled throughout installs and updates.
+
+Two fixtures make useful first examples:
+
+- `fixtures/legacy-app` with `escape-string-regexp@5.0.0` demonstrates an ESM
+  migration that asks for approval.
+- `fixtures/prefix-tool` with `postcss@8.4.35` demonstrates a removed export
+  that the existing test suite does not catch.
+
+## Approving a sensitive change
+
+Some changes sit outside every specialist's standing authority. Setting
+`package.json` to `"type": "module"` is one example. The first run returns
+`human_required` with an approval id and leaves that change pending.
 
 ```bash
 NODE_ENV=development pnpm safe-upgrade escape-string-regexp@5.0.0 \
@@ -68,44 +158,14 @@ NODE_ENV=development pnpm safe-upgrade escape-string-regexp@5.0.0 \
   --approved-by alice
 ```
 
-`--approved-by` is required. The approval names that exact call: it cannot be
-replayed as a different field, path, or worker.
+The approval is bound to the exact worker, tool call, path, field, and value
+reported by the original run.
 
-## Open a draft pull request
+## Workspaces and companion upgrades
 
-If verification passes, `--draft-pr` pushes the run branch and opens a draft.
-It cannot merge, cannot mark the draft ready, and cannot push any other branch.
-`GITHUB_TOKEN` comes from the environment, never from a flag.
-
-```bash
-NODE_ENV=development pnpm safe-upgrade left-pad@1.3.0 \
-  --repository ~/src/app \
-  --draft-pr \
-  --github-repository acme/app
-```
-
-`--publish` is the same flag under the older name.
-
-## Assess a Dependabot pull request
-
-Checkout the **base** branch, not Dependabot's head. The run applies the upgrade
-itself; a head that is already at the target is a no-op and is refused.
-
-```bash
-NODE_ENV=development pnpm safe-upgrade --from-event
-```
-
-`--from-event` reads the package, version, workspace (`in /packages/app`),
-grouped `Updates \`pkg\` from x to y` lines, and pull number from
-`GITHUB_EVENT_PATH`. It comments the verdict on that pull request for
-`verified`, `blocked`, and `human_required`.
-
-Copy [`examples/dependabot-assess.yml`](examples/dependabot-assess.yml) into
-`.github/workflows`. For a version you already know,
-[`examples/scheduled-draft.yml`](examples/scheduled-draft.yml) opens a draft
-from `workflow_dispatch`.
-
-## Workspaces and more than one package
+Use `--workspace` for the package that declares the dependency. Repeat
+`--companion` when a compatible upgrade requires additional exact package
+versions.
 
 ```bash
 NODE_ENV=development pnpm safe-upgrade postcss@8.4.35 \
@@ -114,80 +174,75 @@ NODE_ENV=development pnpm safe-upgrade postcss@8.4.35 \
   --companion nanoid@5.0.0
 ```
 
-- `--workspace` scopes the declaring manifest, the update, and the checks. A
-  Dependabot title's `in /path` fills this in. `packages/*` is expanded.
-- `--companion name@version` (repeatable) names further exact packages this run
-  may move. Grouped Dependabot bodies become companions the same way.
-- A peer the target declares that you did not name is reported and needs a
-  person. It is not moved.
-- Without `--allow-transitive`, any other lockfile version change stops the run.
+Workspace globs such as `packages/*` are expanded during inspection. Peer
+dependencies outside the named upgrade set are reported for human review.
+`--allow-transitive` permits additional lockfile version movement.
 
-## What it will change, and what it will not
+## Use it in CI
 
-It will update the named package(s) to the exact versions, refresh the lockfile,
-add a test when a call site has none, convert CommonJS to ESM when the target
-cannot be `require`d, add a workflow that runs the checks it verified, and
-rename a call site when the old export is gone, the new one exists, and the
-release note says one became the other.
+### Open a draft pull request
 
-It will not invent a replacement for a removed export, enable dependency
-lifecycle scripts, edit an existing workflow in place, or treat a green test
-suite as proof when the broken call site is uncovered.
-
-Try `fixtures/legacy-app` (`escape-string-regexp@5.0.0`) for an ESM migration
-that asks for approval, and `fixtures/prefix-tool` (`postcss@8.4.35`) for a
-removed export the suite does not catch.
-
-## Jev-guided upgrade
-
-Jev makes the bounded judgements that mechanical checks cannot: whether a test
-actually covers a migration finding, whether the completed patch addresses all
-findings, and which already-authorized specialist should act next. Tenuo still
-decides which tools that specialist may invoke and with which arguments.
+After a verified run, `--draft-pr` pushes the run branch and opens a draft pull
+request. The publisher capability is scoped to that branch and draft operation.
+Provide `GITHUB_TOKEN` or `GH_TOKEN` through the environment.
 
 ```bash
-NODE_ENV=development pnpm safe-upgrade cookie@1.0.2 \
+NODE_ENV=development pnpm safe-upgrade left-pad@1.3.0 \
   --repository ~/src/app \
-  --engine jev
+  --draft-pr \
+  --github-repository acme/app
 ```
 
-`--engine jev` needs `TYPESAFE_API_KEY` in the environment. Below
-`--confidence` (default 0.6) the engine's answer is replaced by the
-deterministic order.
+`--publish` remains available as an older name for the same option.
 
-Selecting Jev sends bounded source from only the tests that reach an affected
-file, plus bounded excerpts of the candidate patch, to the configured Jev API.
-Secrets and process environment variables are never included. Use the
-deterministic engine when repository source must remain entirely local.
+### Assess a Dependabot pull request
 
-The default route is deterministic and remains a supported configuration. It
-uses the same Tenuo capability boundaries and verification gates without the
-semantic Jev assessments.
+Run from the pull request's base branch:
 
-## Process isolation
+```bash
+NODE_ENV=development pnpm safe-upgrade --from-event
+```
 
-Package installs may use the network, but dependency lifecycle scripts are
-disabled. Tests, builds, typechecks, and package surface probes run without
-network access. Every child process receives a temporary empty home directory,
-cannot read the user's real home, and may write only to the disposable worktree
-and its temporary scratch directory.
+`--from-event` reads the package, target version, workspace, grouped companion
+updates, and pull request number from `GITHUB_EVENT_PATH`. It can post the
+result for `verified`, `blocked`, and `human_required` runs.
 
-The command fails closed when the operating-system sandbox is unavailable.
-`SAFE_UPGRADE_ALLOW_UNSANDBOXED=1` exists only for test infrastructure that is
-already isolated. The CLI prints a warning whenever it is set. Do not use it for
-a normal upgrade run.
+See [`examples/dependabot-assess.yml`](examples/dependabot-assess.yml) for event
+assessment and [`examples/scheduled-draft.yml`](examples/scheduled-draft.yml)
+for a manually triggered draft upgrade.
 
-## Environment
+## How repository code is contained
 
-| Variable | Used for |
+Tenuo controls which operations each specialist can request. An operating
+system sandbox contains the package and repository code launched by those
+operations.
+
+- Package downloads have network access with lifecycle scripts disabled.
+- Tests, builds, typechecks, and package surface probes run without network
+  access.
+- Child processes receive an empty temporary home directory.
+- Writes are limited to the disposable worktree and run-local scratch space.
+- Verification detects any command that changes the candidate under review.
+
+The command stops if the operating-system sandbox is unavailable.
+`SAFE_UPGRADE_ALLOW_UNSANDBOXED=1` supports test infrastructure that already
+provides equivalent isolation. The CLI prints a prominent warning when this
+setting is active.
+
+## Environment configuration
+
+| Variable | Purpose |
 | --- | --- |
-| `GITHUB_TOKEN` or `GH_TOKEN` | Draft pull requests and PR comments. Never a flag. |
-| `TYPESAFE_API_KEY` | `--engine jev`. Never a flag. |
-| `TENUO_ROOT_PUBLIC_KEY`, `TENUO_RUN_WARRANT`, `TENUO_RUN_HOLDER_SECRET` | Production: narrow a warrant an issuer granted. All three, or none. |
-| `NODE_ENV=development` | Local trial that mints its own authority. Reported on stderr. |
-| `SAFE_UPGRADE_ALLOW_UNSANDBOXED=1` | Disables OS process isolation for already-sandboxed test infrastructure only. Prints a warning. |
+| `GITHUB_TOKEN` or `GH_TOKEN` | Authenticate draft pull requests and pull request comments. |
+| `TYPESAFE_API_KEY` | Enable `--engine jev`. |
+| `TENUO_ROOT_PUBLIC_KEY` | Identify the production authorization root. |
+| `TENUO_RUN_WARRANT` | Supply the production run warrant. |
+| `TENUO_RUN_HOLDER_SECRET` | Prove possession for the production run warrant. |
+| `NODE_ENV=development` | Allow a local trial to mint and clearly report its own authority. |
+| `SAFE_UPGRADE_ALLOW_UNSANDBOXED=1` | Disable process isolation inside pre-isolated test infrastructure. |
 
-`pnpm safe-upgrade --help` is the flag list.
+The three Tenuo production variables are used together. Run
+`pnpm safe-upgrade --help` for the complete CLI reference.
 
-How a run is split across specialists, and what each of them is allowed to
-do, is in [`docs/architecture.md`](docs/architecture.md).
+For the worker boundaries, routing rules, verification policy, and authorization
+model, read [`docs/architecture.md`](docs/architecture.md).
