@@ -113,12 +113,18 @@ async function semanticCompleteness(
   checks: readonly CheckResult[],
   diff: string,
 ): Promise<{ readonly verified: readonly string[]; readonly uncertainty: readonly string[] }> {
-  if (input.state.findings.length === 0) {
+  // Findings explicitly classified as requiring no source change are established by
+  // repository facts and the verifier's checks. Asking whether a patch addresses them
+  // creates a false negative precisely because the correct patch is no patch at all.
+  const semanticFindings = input.state.findings.filter(
+    (finding) => finding.noSourceChangeRequired !== true,
+  );
+  if (semanticFindings.length === 0) {
     return { verified: deterministicVerified, uncertainty: [] };
   }
   try {
     const decision = await input.engine.assessMigrationCompleteness({
-      findings: input.state.findings.map((finding) => ({
+      findings: semanticFindings.map((finding) => ({
         id: finding.id,
         summary: finding.releaseClaim,
         affectedFileCount: finding.affectedFiles.length,
@@ -139,6 +145,7 @@ async function semanticCompleteness(
       payload: {
         complete: decision.complete,
         confidence: decision.confidence,
+        assessedFindingIds: semanticFindings.map((finding) => finding.id),
         unaddressedFindingIds: decision.unaddressedFindingIds,
       },
     });

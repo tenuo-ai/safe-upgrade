@@ -187,3 +187,7 @@ already provides equivalent isolation.
 The three Tenuo production variables are used together. The patch-model mode
 sends selected source and test files to the OpenAI Responses API with response
 storage disabled.
+
+## License
+
+[Apache License 2.0](LICENSE)

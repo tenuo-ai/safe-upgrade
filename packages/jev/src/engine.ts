@@ -214,7 +214,7 @@ export class JevDecisionEngine implements DecisionEngine {
       const key = `finding_${String(index)}`;
       keys.set(key, finding.id);
       questions[key] = noul(
-        `Do the listed patch excerpts address this concern: ${finding.summary}`,
+        `Does the supplied patch and verification evidence show that this concern is addressed: ${finding.summary}`,
       );
     }
 
