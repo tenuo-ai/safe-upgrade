@@ -56,7 +56,7 @@ describeE2E("a read-only first-run assessment", () => {
     expect(markdown).toMatch(/Delegated access used for this assessment/);
     expect(markdown).not.toMatch(/test_author:.*write_test_file/);
     expect(markdown).toMatch(/test_author: read_file, list_files/);
-    expect(markdown).toContain(`--repository '${repo.path}'`);
+    expect(markdown).toContain(`npx @tenuo/safe-upgrade apply '${report.runId}'`);
     expect(markdown).toContain("Repository files changed: none");
   });
 });

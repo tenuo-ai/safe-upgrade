@@ -11,7 +11,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { realpathSync } from "node:fs";
 import type { RunStatus } from "@safe-upgrade/domain";
 import {
   formatProgress,
@@ -29,6 +29,14 @@ import { PackageResolutionError, RepositoryError } from "@safe-upgrade/domain";
 import { HELP, VERSION } from "./help.ts";
 import { OpenAIPatchGenerator } from "@safe-upgrade/workers";
 import { discoverUpgradeCandidate, type CandidateDiscovery } from "./discovery.ts";
+import { doctorChecks, renderDoctor } from "./doctor.ts";
+import {
+  defaultRunDirectory,
+  loadAssessment,
+  saveAssessment,
+  validateAssessmentState,
+  type StoredAssessment,
+} from "./storage.ts";
 
 export interface Streams {
   readonly out: (text: string) => void;
@@ -73,14 +81,27 @@ export async function main(argv: readonly string[], streams: Streams): Promise<n
   let parsed: ParsedArguments;
   let options: RunOptions;
   let discovery: CandidateDiscovery | undefined;
+  let prepared: PreparedRun;
   try {
     parsed = parseArguments(argv);
-    const choice = chooseAuthorization(streams.env);
+    const checks = doctorChecks(streams.env);
+    if (parsed.mode === "doctor") {
+      streams.out(renderDoctor(checks));
+      return checks.every((check) => check.ok) ? 0 : EXIT.unusable;
+    }
+    const failedChecks = checks.filter((check) => !check.ok);
+    if (failedChecks.length > 0) {
+      streams.err(`safe-upgrade: local requirements are not ready\n${renderDoctor(checks)}`);
+      return EXIT.unusable;
+    }
+    const choice = chooseAuthorization(streams.env, {
+      allowSelfAuthorizedLocalTrial: parsed.mode === "assess" || parsed.mode === "apply",
+    });
     if (choice.refusal !== undefined) {
       streams.err(`safe-upgrade: ${choice.refusal}\n`);
       return EXIT.usage;
     }
-    const prepared = await toRunOptions(parsed, parsed.runId ?? randomUUID(), streams);
+    prepared = await toRunOptions(parsed, parsed.runId ?? randomUUID(), streams);
     options = prepared.options;
     discovery = prepared.discovery;
     if (choice.authorization !== undefined) {
@@ -96,7 +117,8 @@ export async function main(argv: readonly string[], streams: Streams): Promise<n
       return EXIT.usage;
     }
     if (isPrecondition(error)) {
-      streams.err(`safe-upgrade: this repository cannot be assessed: ${messageOf(error)}\n`);
+      const action = argv[0] === "apply" ? "continue this assessment" : "be assessed";
+      streams.err(`safe-upgrade: this repository cannot ${action}: ${messageOf(error)}\n`);
       return EXIT.unusable;
     }
     throw error;
@@ -135,6 +157,19 @@ export async function main(argv: readonly string[], streams: Streams): Promise<n
     return EXIT.internal;
   }
 
+  if (parsed.mode === "assess") {
+    try {
+      saveAssessment(report, {
+        env: streams.env,
+        engine: prepared.engine,
+        ...(prepared.patchModel === undefined ? {} : { patchModel: prepared.patchModel }),
+      });
+    } catch (error) {
+      streams.err(`safe-upgrade: the assessment completed but its continuation record could not be saved: ${messageOf(error)}\n`);
+      return EXIT.internal;
+    }
+  }
+
   streams.out(format(report, parsed.format, parsed.mode));
   streams.err(`${parsed.mode === "assess" ? summarizeAssessment(report) : summarize(report)}\n`);
   if (parsed.mode === "assess") {
@@ -168,7 +203,11 @@ function summarizeAssessment(report: RunReport): string {
   return `assessment complete: ${report.request.packageName} ${report.facts.currentVersion} -> ${report.request.targetVersion}\n  ${String(findingCount)} repository-specific ${findingCount === 1 ? "finding" : "findings"}; ${coverage === null ? "no coverage gap to assess" : coverage.sufficient ? "existing verification coverage is sufficient" : "verification gaps were found"}`;
 }
 
-function format(report: RunReport, shape: "markdown" | "json", mode: "upgrade" | "assess"): string {
+function format(
+  report: RunReport,
+  shape: "markdown" | "json",
+  mode: ParsedArguments["mode"],
+): string {
   if (shape === "json") return `${JSON.stringify(report, null, 2)}\n`;
   return `${mode === "assess" ? renderAssessment(report) : renderReport(report)}\n`;
 }
@@ -176,6 +215,9 @@ function format(report: RunReport, shape: "markdown" | "json", mode: "upgrade" |
 interface PreparedRun {
   readonly options: RunOptions;
   readonly discovery?: CandidateDiscovery;
+  readonly assessment?: StoredAssessment;
+  readonly engine: "jev" | "deterministic";
+  readonly patchModel?: string;
 }
 
 async function toRunOptions(
@@ -183,6 +225,25 @@ async function toRunOptions(
   runId: string,
   streams: Streams,
 ): Promise<PreparedRun> {
+  const assessment = parsed.mode === "apply" && parsed.assessmentId !== undefined
+    ? loadAssessment(parsed.assessmentId, streams.env)
+    : undefined;
+  if (assessment !== undefined) {
+    validateAssessmentState(assessment);
+    let explicitRepository: string | undefined;
+    if (parsed.repositoryExplicit) {
+      try {
+        explicitRepository = realpathSync(parsed.repositoryPath);
+      } catch (error) {
+        throw new PackageResolutionError(`repository ${parsed.repositoryPath} could not be read: ${messageOf(error)}`);
+      }
+    }
+    if (explicitRepository !== undefined && explicitRepository !== assessment.repositoryPath) {
+      throw new PackageResolutionError(
+        `assessment ${assessment.id} belongs to ${assessment.repositoryPath}, not ${parsed.repositoryPath}`,
+      );
+    }
+  }
   const event = parsed.fromEvent ? readPullRequestEvent(streams.env) : undefined;
   const discovery = parsed.mode === "assess" && parsed.packageName === undefined
     ? await discoverUpgradeCandidate({
@@ -190,13 +251,19 @@ async function toRunOptions(
         ...(parsed.workspace === undefined ? {} : { workspace: parsed.workspace }),
       })
     : undefined;
-  const packageName = parsed.packageName ?? event?.packageName ?? discovery?.selected.packageName;
-  const targetVersion = parsed.targetVersion ?? event?.targetVersion ?? discovery?.selected.targetVersion;
+  const packageName = parsed.packageName ?? event?.packageName ?? discovery?.selected.packageName ?? assessment?.packageName;
+  const targetVersion = parsed.targetVersion ?? event?.targetVersion ?? discovery?.selected.targetVersion ?? assessment?.targetVersion;
   if (packageName === undefined || targetVersion === undefined) {
     throw new UsageError("name the package to upgrade, as name@version");
   }
   const companions = parsed.companions.length > 0 ? parsed.companions : (event?.companions ?? []);
-  const workspace = parsed.workspace ?? event?.workspace;
+  const workspace = parsed.workspace ?? event?.workspace ?? assessment?.workspace;
+  const repositoryPath = assessment?.repositoryPath ?? parsed.repositoryPath;
+  const engine = assessment !== undefined && !parsed.engineExplicit ? assessment.engine : parsed.engine;
+  const patchModel = parsed.patchModel ?? assessment?.patchModel;
+  if (patchModel !== undefined && engine !== "jev") {
+    throw new UsageError("the saved patch model requires --engine jev");
+  }
 
   const commentPullRequest = parsed.commentPullRequest ?? event?.pullRequestNumber;
   const wantsGitHub = parsed.createDraftPullRequest || commentPullRequest !== undefined;
@@ -216,30 +283,43 @@ async function toRunOptions(
   }
 
   const openAiKey = streams.env["OPENAI_API_KEY"];
-  if (parsed.patchModel !== undefined && (openAiKey === undefined || openAiKey === "")) {
+  if (patchModel !== undefined && (openAiKey === undefined || openAiKey === "")) {
     throw new UsageError(
       "--patch-model needs OPENAI_API_KEY in the environment. It is not accepted as a flag.",
     );
   }
 
   const options: RunOptions = {
-    engine: buildEngine(parsed, streams),
-    ...(parsed.patchModel === undefined || openAiKey === undefined
+    engine: buildEngine(engine, streams),
+    ...(patchModel === undefined || openAiKey === undefined
       ? {}
-      : { patchGenerator: new OpenAIPatchGenerator({ apiKey: openAiKey, model: parsed.patchModel }) }),
+      : { patchGenerator: new OpenAIPatchGenerator({ apiKey: openAiKey, model: patchModel }) }),
     ...(parsed.confidenceThreshold === undefined
       ? {}
       : { router: { confidenceThreshold: parsed.confidenceThreshold } }),
-    repositoryPath: parsed.repositoryPath,
+    repositoryPath,
     packageName,
     targetVersion,
     ...(parsed.mode === "assess" ? { assessmentOnly: true } : {}),
+    ...(parsed.mode === "assess" || parsed.mode === "apply"
+      ? { allowSelfAuthorizedLocalTrial: true }
+      : {}),
+    ...(assessment === undefined
+      ? {}
+      : {
+          startCommit: assessment.startCommit,
+          assessment: {
+            id: assessment.id,
+            artifactsDirectory: assessment.artifactsDirectory,
+            startCommit: assessment.startCommit,
+          },
+        }),
     companions,
     ...(workspace === undefined || workspace === "" ? {} : { workspace }),
     runId,
-    // Defaulted rather than optional: a run that wrote no record is one nobody can check,
-    // and the spec's artifact layout is `artifacts/<run-id>`.
-    artifactsDirectory: parsed.artifactsDirectory ?? join(process.cwd(), "artifacts", runId),
+    // Defaulted rather than optional: a run that wrote no record is one nobody can check.
+    // The default stays outside the target repository so an assessment does not dirty it.
+    artifactsDirectory: parsed.artifactsDirectory ?? defaultRunDirectory(streams.env, runId),
     approvals: parsed.approvals,
     publishApproved: parsed.publishApproved,
     createDraftPullRequest: parsed.createDraftPullRequest,
@@ -250,7 +330,13 @@ async function toRunOptions(
       ? { github: { repository: githubRepository, token } }
       : {}),
   };
-  return { options, ...(discovery === undefined ? {} : { discovery }) };
+  return {
+    options,
+    engine,
+    ...(patchModel === undefined ? {} : { patchModel }),
+    ...(discovery === undefined ? {} : { discovery }),
+    ...(assessment === undefined ? {} : { assessment }),
+  };
 }
 
 /**
@@ -261,8 +347,8 @@ async function toRunOptions(
  * defensible position for anything automated. Asking for `jev` is asking for a judgement, so
  * it is explicit, and the key comes from the environment.
  */
-function buildEngine(parsed: ParsedArguments, streams: Streams) {
-  if (parsed.engine === "deterministic") {
+function buildEngine(engine: "jev" | "deterministic", streams: Streams) {
+  if (engine === "deterministic") {
     return new DeterministicEngine();
   }
   if ((streams.env["TYPESAFE_API_KEY"] ?? "") === "") {

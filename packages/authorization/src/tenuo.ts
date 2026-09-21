@@ -46,6 +46,8 @@ export interface RuntimeOptions {
   readonly releaseHosts?: readonly string[];
   readonly parentTtlSeconds?: number;
   readonly onInvoke?: (name: string, args: Readonly<Record<string, unknown>>) => void;
+  /** Explicit local CLI trial, permitted to mint a root outside NODE_ENV development. */
+  readonly allowSelfAuthorizedLocalTrial?: boolean;
 }
 
 export interface ProductionRuntimeOptions extends RuntimeOptions {
@@ -156,7 +158,11 @@ const DEFAULT_PARENT_TTL_SECONDS = 1_800;
  * when NODE_ENV is development or test.
  */
 export function createDevAuthorizationRuntime(options: RuntimeOptions): AuthorizationRuntime {
-  const tenuo = createTenuo({ root: createTenuo.devRoot() });
+  const tenuo = createTenuo({
+    root: createTenuo.devRoot({
+      allowInProduction: options.allowSelfAuthorizedLocalTrial === true,
+    }),
+  });
   const { ceilingContext, toolContext } = contexts(options);
   // The parent holds exactly the union of the ceilings, so every capability a
   // worker could ever be delegated is visible in one object.

@@ -26,6 +26,23 @@ function parse(...argv: readonly string[]) {
 }
 
 describe("naming what to upgrade", () => {
+  it("continues a saved assessment by id", () => {
+    const parsed = parse("apply", "01234567-89ab-4cde-8fab-0123456789ab");
+    expect(parsed.mode).toBe("apply");
+    expect(parsed.assessmentId).toBe("01234567-89ab-4cde-8fab-0123456789ab");
+  });
+
+  it("requires exactly one assessment id for apply", () => {
+    expect(() => parse("apply")).toThrow(/assessment id/);
+    expect(() => parse("apply", "one", "two")).toThrow(/assessment id/);
+  });
+
+  it("accepts doctor without upgrade arguments", () => {
+    expect(parse("doctor").mode).toBe("doctor");
+    expect(() => parse("doctor", "postcss@8.4.35")).toThrow(/no positional/);
+    expect(() => parse("doctor", "--repository", ".")).toThrow(/no upgrade options/);
+  });
+
   it("accepts an assessment with automatic package selection", () => {
     const parsed = parse("assess");
     expect(parsed.mode).toBe("assess");
@@ -308,5 +325,11 @@ describe("what it tells a person watching", () => {
     for (const code of Object.values(EXIT)) {
       expect(HELP, String(code)).toContain(`  ${String(code)} `.trimEnd());
     }
+  });
+
+  it("documents assessment continuation and environment checks", () => {
+    expect(HELP).toContain("safe-upgrade apply <assessment-id>");
+    expect(HELP).toContain("safe-upgrade doctor");
+    expect(HELP).toContain("SAFE_UPGRADE_HOME");
   });
 });

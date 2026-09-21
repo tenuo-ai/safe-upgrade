@@ -70,6 +70,12 @@ describe("a configuration left half-finished", () => {
 });
 
 describe("no warrant at all", () => {
+  it("allows an explicitly requested local assessment outside development", () => {
+    const choice = chooseAuthorization({}, { allowSelfAuthorizedLocalTrial: true });
+    expect(choice.refusal).toBeUndefined();
+    expect(choice.warning).toMatch(/minted its own authority/);
+  });
+
   it("refuses outside a development environment", () => {
     // Rather than letting Tenuo refuse, whose message suggests TENUO_ALLOW_DEV=1 — the right
     // answer to the question it was asked, and the wrong thing to reach for when what is

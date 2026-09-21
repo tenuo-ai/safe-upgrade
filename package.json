@@ -1,17 +1,40 @@
 {
-  "name": "safe-upgrade",
-  "private": true,
+  "name": "@tenuo/safe-upgrade",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Repository-aware dependency migrations with delegated authorization",
   "license": "Apache-2.0",
   "type": "module",
+  "bin": {
+    "safe-upgrade": "packages/cli/bin/safe-upgrade.mjs"
+  },
+  "files": [
+    "packages/cli/bin",
+    "packages/cli/dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tenuo-ai/safe-upgrade.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "packageManager": "pnpm@9.15.9",
   "engines": {
     "node": ">=22.18.0"
   },
   "scripts": {
+    "build:cli": "esbuild packages/cli/src/main.ts --bundle --platform=node --format=esm --target=node22 --outfile=packages/cli/dist/main.js --external:@tenuo/core",
+    "prepack": "pnpm build:cli",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "safe-upgrade": "node packages/cli/bin/safe-upgrade.mjs"
+  },
+  "dependencies": {
+    "@tenuo/core": "0.3.0-beta.0"
   },
   "devDependencies": {
     "@langchain/langgraph": "1.4.16",
@@ -25,8 +48,8 @@
     "@safe-upgrade/runner": "workspace:*",
     "@safe-upgrade/tools": "workspace:*",
     "@safe-upgrade/workers": "workspace:*",
-    "@tenuo/core": "0.3.0-beta.0",
     "@types/node": "^22.13.10",
+    "esbuild": "0.28.2",
     "typescript": "~5.8.2",
     "vitest": "^3.0.9"
   }

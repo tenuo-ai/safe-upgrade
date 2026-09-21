@@ -13,4 +13,14 @@ export {
   ROOT_PUBLIC_KEY_ENV,
   WARRANT_ENV,
 } from "./authorization.ts";
-export type { AuthorizationChoice } from "./authorization.ts";
+export type { AuthorizationChoice, AuthorizationChoiceOptions } from "./authorization.ts";
+export { doctorChecks, renderDoctor } from "./doctor.ts";
+export type { DoctorCheck } from "./doctor.ts";
+export {
+  defaultRunDirectory,
+  loadAssessment,
+  safeUpgradeHome,
+  saveAssessment,
+  validateAssessmentState,
+} from "./storage.ts";
+export type { StoredAssessment } from "./storage.ts";

@@ -62,6 +62,14 @@ export interface RunOptions {
   readonly targetVersion: string;
   /** Inspect, research, and assess coverage without offering a writing worker. */
   readonly assessmentOnly?: boolean;
+  /** Explicit local CLI operation using a self-minted Tenuo root. */
+  readonly allowSelfAuthorizedLocalTrial?: boolean;
+  /** Prior assessment whose evidence and repository state this run continues. */
+  readonly assessment?: {
+    readonly id: string;
+    readonly artifactsDirectory: string;
+    readonly startCommit: string;
+  };
   readonly companions?: readonly { readonly packageName: string; readonly targetVersion: string }[];
   readonly workspace?: string;
   /**
@@ -166,6 +174,8 @@ export interface RunReport {
   readonly request: UpgradeRequest;
   /** The checkout supplied by the caller, retained for continuation commands. */
   readonly sourceRepositoryPath?: string;
+  readonly assessmentId?: string;
+  readonly assessmentArtifactsDirectory?: string;
   readonly result: FinalResult;
   readonly facts: RepositoryFacts;
   readonly startCommit: string;
@@ -233,6 +243,17 @@ export async function runUpgrade(options: RunOptions): Promise<RunReport> {
       ...(artifactsDirectory === undefined ? {} : { directory: artifactsDirectory }),
       ...(options.clock === undefined ? {} : { clock: options.clock }),
     });
+    if (options.assessment !== undefined) {
+      audit.record({
+        phase: "inspect",
+        type: "assessment_applied",
+        payload: {
+          assessmentId: options.assessment.id,
+          assessmentArtifactsDirectory: options.assessment.artifactsDirectory,
+          assessedCommit: options.assessment.startCommit,
+        },
+      });
+    }
 
     const runtimeOptions = {
       runId,
@@ -247,6 +268,9 @@ export async function runUpgrade(options: RunOptions): Promise<RunReport> {
       ...(options.github === undefined ? {} : { github: options.github }),
       targetVersion: options.targetVersion,
       audit,
+      ...(options.allowSelfAuthorizedLocalTrial === true
+        ? { allowSelfAuthorizedLocalTrial: true }
+        : {}),
     };
     // Which root this run trusts, decided here and nowhere else.
     const runtime =
@@ -341,6 +365,12 @@ export async function runUpgrade(options: RunOptions): Promise<RunReport> {
       runId,
       request,
       sourceRepositoryPath: options.repositoryPath,
+      ...(options.assessment === undefined
+        ? {}
+        : {
+            assessmentId: options.assessment.id,
+            assessmentArtifactsDirectory: options.assessment.artifactsDirectory,
+          }),
       result,
       facts: detection.facts,
       startCommit: isolation.startCommit,
@@ -502,6 +532,9 @@ export function renderReport(report: RunReport): string {
     `- Repository: ${facts.worktreePath} at ${report.startCommit}`,
     `- Package manager: ${facts.packageManager} (${facts.lockfile})`,
     `- Source checkout clean at start: ${String(report.sourceClean)}`,
+    ...(report.assessmentId === undefined
+      ? []
+      : [`- Continues assessment: \`${report.assessmentId}\` (${report.assessmentArtifactsDirectory ?? "record unavailable"})`]),
     "",
   ];
 
@@ -671,12 +704,11 @@ export function renderAssessment(report: RunReport): string {
   });
   section("Delegated access used for this assessment", [...new Set(boundaries)]);
 
-  const workspace = request.workspace === "" ? "" : ` --workspace ${shellQuote(request.workspace)}`;
   lines.push(
     "## Apply the upgrade",
     "",
     "```bash",
-    `pnpm safe-upgrade ${shellQuote(`${request.packageName}@${request.targetVersion}`)} --repository ${shellQuote(sourceRepositoryPath)}${workspace}`,
+    `npx @tenuo/safe-upgrade apply ${shellQuote(report.runId)}`,
     "```",
     "",
     "The upgrade will run in another disposable worktree and ask for approval if a step needs authority outside its worker's warrant.",

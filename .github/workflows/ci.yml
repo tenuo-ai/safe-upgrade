@@ -47,6 +47,9 @@ jobs:
 
       - run: pnpm test
 
+      - name: Verify publishable CLI package
+        run: npm pack --dry-run
+
   # Separated because it installs a dependency from the registry and runs the
   # fixture's own scripts as child processes. Opt-in locally, always on here.
   end-to-end:

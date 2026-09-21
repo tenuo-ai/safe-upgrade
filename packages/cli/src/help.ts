@@ -1,23 +1,30 @@
 /** Usage text. Kept beside the parser so a flag cannot be added without a line about it. */
 
-export const VERSION = "0.0.0";
+export const VERSION = "0.1.0";
 
 export const HELP = `safe-upgrade: upgrade one dependency, and establish what that did
 
 Usage
   safe-upgrade assess [name@exact-version] [options]
+  safe-upgrade apply <assessment-id> [options]
+  safe-upgrade doctor
   safe-upgrade <name>@<exact-version> [options]
 
 Run \`assess\` without a package to select an outdated direct dependency, establish
 the current baseline, research its latest release, and report repository-specific
 risk and test coverage. Assessment does not offer any writing worker.
 
+Run \`apply\` with the assessment id printed by \`assess\`. It continues from the
+recorded evidence only when the repository commit, manifest, and lockfile still
+match the assessed state.
+
 The version is exact. A range or a tag resolves to whatever the registry serves at the
 time, and every claim a run makes is about one version whose manifest it read.
 
 Options
   --repository <path>         Repository to upgrade. Read, never written. Default: cwd.
-  --artifacts <dir>           Where to write the run's record. Default: artifacts/<run-id>.
+  --artifacts <dir>           Where to write the run's record. Default: the safe-upgrade
+                              state directory outside the repository.
   --run-id <id>               Name this run. Default: a fresh UUID.
   --approve <id>              Approve one call a previous run asked about, by id.
                               Repeatable. Needs --approved-by.
@@ -62,6 +69,10 @@ Environment
                               All three together mean the run narrows authority it was
                               given. None of them means it mints its own, which is for
                               local trials only and is reported when it happens.
+  SAFE_UPGRADE_HOME           Where assessments and run records are kept. Default:
+                              $XDG_STATE_HOME/safe-upgrade or ~/.local/state/safe-upgrade.
+  SAFE_UPGRADE_ALLOW_UNSANDBOXED=1
+                              Explicitly allow running without supported OS isolation.
 
 Exit codes
   0   verified, or partial with --partial-allowed
@@ -75,8 +86,10 @@ Exit codes
   70  the run could not complete
 
 Examples
-  safe-upgrade assess --repository ~/src/app
-  safe-upgrade assess postcss@8.4.35 --repository ~/src/app --engine jev
+  npx @tenuo/safe-upgrade doctor
+  npx @tenuo/safe-upgrade assess --repository ~/src/app
+  npx @tenuo/safe-upgrade apply 8d34a7c2
+  npx @tenuo/safe-upgrade assess postcss@8.4.35 --repository ~/src/app --engine jev
   safe-upgrade postcss@8.4.35 --repository ~/src/app
   safe-upgrade postcss@8.4.35 --workspace packages/app --companion nanoid@5.0.0
   safe-upgrade postcss@8.4.35 --engine jev --patch-model your-model-id

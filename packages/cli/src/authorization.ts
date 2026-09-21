@@ -32,6 +32,11 @@ export interface AuthorizationChoice {
   readonly refusal: string | undefined;
 }
 
+export interface AuthorizationChoiceOptions {
+  /** The user explicitly selected a local-only command such as assess or apply. */
+  readonly allowSelfAuthorizedLocalTrial?: boolean;
+}
+
 /** Environments where a self-minted root is a reasonable thing to be using. */
 function isDevelopment(env: Readonly<Record<string, string | undefined>>): boolean {
   const mode = env["NODE_ENV"];
@@ -40,6 +45,7 @@ function isDevelopment(env: Readonly<Record<string, string | undefined>>): boole
 
 export function chooseAuthorization(
   env: Readonly<Record<string, string | undefined>>,
+  options: AuthorizationChoiceOptions = {},
 ): AuthorizationChoice {
   const present = [ROOT_PUBLIC_KEY_ENV, WARRANT_ENV, HOLDER_SECRET_ENV].filter(
     (name) => (env[name] ?? "") !== "",
@@ -74,6 +80,13 @@ export function chooseAuthorization(
   }
 
   const setThem = `Set ${ROOT_PUBLIC_KEY_ENV}, ${WARRANT_ENV}, and ${HOLDER_SECRET_ENV} to run under a warrant an issuer granted`;
+  if (options.allowSelfAuthorizedLocalTrial === true) {
+    return {
+      authorization: undefined,
+      warning: `This local operation minted its own authority. Every capability limit still applies, but nothing outside this process attested to it. ${setThem}.`,
+      refusal: undefined,
+    };
+  }
   if (!isDevelopment(env)) {
     return {
       authorization: undefined,

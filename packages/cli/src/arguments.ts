@@ -21,8 +21,10 @@ import { isAbsolute, resolve } from "node:path";
 import type { ElevationGrant } from "@safe-upgrade/domain";
 
 export interface ParsedArguments {
-  readonly mode: "upgrade" | "assess";
+  readonly mode: "upgrade" | "assess" | "apply" | "doctor";
+  readonly assessmentId: string | undefined;
   readonly repositoryPath: string;
+  readonly repositoryExplicit: boolean;
   readonly packageName: string | undefined;
   readonly targetVersion: string | undefined;
   readonly companions: readonly { readonly packageName: string; readonly targetVersion: string }[];
@@ -40,6 +42,7 @@ export interface ParsedArguments {
   readonly partialAllowed: boolean;
   readonly format: "markdown" | "json";
   readonly engine: "jev" | "deterministic";
+  readonly engineExplicit: boolean;
   /** OpenAI model used for bounded source and test patch proposals. */
   readonly patchModel: string | undefined;
   /** Below this, the engine's answer is replaced by the deterministic order. */
@@ -134,20 +137,33 @@ export function parseArguments(argv: readonly string[], now: () => Date = () => 
     }
   }
 
-  const mode = positional[0] === "assess" ? "assess" : "upgrade";
-  const targets = mode === "assess" ? positional.slice(1) : positional;
+  const command = positional[0];
+  const mode = command === "assess" || command === "apply" || command === "doctor"
+    ? command
+    : "upgrade";
+  const targets = mode === "upgrade" ? positional : positional.slice(1);
 
   if (targets.length === 0 && mode === "upgrade" && !flags.has("--from-event")) {
     throw new UsageError("name the package to upgrade, as name@version");
   }
-  if (targets.length > 1) {
+  if ((mode === "upgrade" || mode === "assess") && targets.length > 1) {
     throw new UsageError(
       `one positional package, and ${String(targets.length)} were given. Further packages belong on --companion name@version.`,
     );
   }
 
+  if (mode === "apply" && targets.length !== 1) {
+    throw new UsageError("apply needs the assessment id printed by an earlier assessment");
+  }
+  if (mode === "doctor" && targets.length !== 0) {
+    throw new UsageError("doctor takes no positional arguments");
+  }
+
   const named =
-    targets.length === 1 ? parseSpecifier(targets[0] ?? "") : { packageName: undefined, targetVersion: undefined };
+    (mode === "upgrade" || mode === "assess") && targets.length === 1
+      ? parseSpecifier(targets[0] ?? "")
+      : { packageName: undefined, targetVersion: undefined };
+  const assessmentId = mode === "apply" ? targets[0] : undefined;
   const companions = companionSpecs.map((spec) => parseSpecifier(spec));
   if (companions.length > 8) {
     throw new UsageError("--companion accepts at most 8 further packages");
@@ -177,6 +193,23 @@ export function parseArguments(argv: readonly string[], now: () => Date = () => 
       throw new UsageError(`assess does not make or publish changes, so it does not accept ${incompatible.join(", ")}`);
     }
   }
+  if (mode === "apply") {
+    const incompatible = [
+      ...(companionSpecs.length > 0 ? ["--companion"] : []),
+      ...(flags.has("--from-event") ? ["--from-event"] : []),
+      ...(values.has("--workspace") ? ["--workspace"] : []),
+      ...(values.has("--comment-pr") ? ["--comment-pr"] : []),
+    ];
+    if (incompatible.length > 0) {
+      throw new UsageError(`apply uses the saved assessment target, so it does not accept ${incompatible.join(", ")}`);
+    }
+  }
+  if (mode === "doctor") {
+    const supplied = [...values.keys(), ...flags].filter((name) => name !== "--quiet");
+    if (supplied.length > 0 || approveIds.length > 0 || companionSpecs.length > 0) {
+      throw new UsageError("doctor takes no upgrade options");
+    }
+  }
 
   const githubRepository = values.get("--github-repository");
   if (githubRepository !== undefined && !GITHUB_REPOSITORY.test(githubRepository)) {
@@ -198,7 +231,7 @@ export function parseArguments(argv: readonly string[], now: () => Date = () => 
     if (patchModel.length > 200 || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(patchModel)) {
       throw new UsageError(`--patch-model is not a valid model id: ${patchModel}`);
     }
-    if (engine !== "jev") {
+    if (engine !== "jev" && mode !== "apply") {
       throw new UsageError(
         "--patch-model requires --engine jev so generated patches receive semantic review",
       );
@@ -232,7 +265,9 @@ export function parseArguments(argv: readonly string[], now: () => Date = () => 
   const artifacts = values.get("--artifacts");
   return {
     mode,
+    assessmentId,
     repositoryPath: resolve(values.get("--repository") ?? process.cwd()),
+    repositoryExplicit: values.has("--repository"),
     packageName: named.packageName,
     targetVersion: named.targetVersion,
     companions,
@@ -251,6 +286,7 @@ export function parseArguments(argv: readonly string[], now: () => Date = () => 
     partialAllowed: flags.has("--partial-allowed"),
     format,
     engine,
+    engineExplicit: values.has("--engine"),
     patchModel,
     confidenceThreshold,
     quiet: flags.has("--quiet"),

@@ -14,38 +14,46 @@ evidence-backed result you can review.
 
 Requirements:
 
-- Node 22.18 or newer and pnpm
+- Node 22.18 or newer and Git
+- The package manager used by the repository being assessed
 - macOS with `/usr/bin/sandbox-exec`, or Linux with `/usr/bin/bwrap`
 - A git repository using `package-lock.json`, `pnpm-lock.yaml`, or `yarn.lock`
 
 ```bash
-git clone https://github.com/tenuo-ai/safe-upgrade.git
-cd safe-upgrade
-pnpm install
+npx @tenuo/safe-upgrade doctor
+npx @tenuo/safe-upgrade assess --repository ~/src/app
+```
 
-NODE_ENV=development pnpm safe-upgrade assess \
-  --repository ~/src/app
+The assessment ends with an id and a continuation command. If the findings look
+right, continue from that exact repository state:
+
+```bash
+npx @tenuo/safe-upgrade apply <assessment-id>
 ```
 
 The assessment selects an outdated direct dependency and shows the
 repository-specific risk, affected files, existing verification coverage, and
 the Tenuo warrant used by each specialist. It does not offer any writing worker
-and finishes with a command you can copy to continue the upgrade.
+and finishes with a command you can copy to continue the upgrade. `apply`
+refuses to reuse the assessment if the commit, manifest, lockfile, or working
+tree has changed.
 
 You can also assess a specific target:
 
 ```bash
-NODE_ENV=development pnpm safe-upgrade assess postcss@8.4.35 \
+npx @tenuo/safe-upgrade assess postcss@8.4.35 \
   --repository ~/src/app
 ```
 
 Targets are always exact versions. Progress is written to stderr, the report to
-stdout, and the full run record to `artifacts/<run-id>`.
+stdout, and the full run record outside the repository under
+`~/.local/state/safe-upgrade`. Set `SAFE_UPGRADE_HOME` to choose another state
+directory.
 
 For JSON output:
 
 ```bash
-NODE_ENV=development pnpm safe-upgrade assess postcss@8.4.35 \
+npx @tenuo/safe-upgrade assess postcss@8.4.35 \
   --repository ~/src/app \
   --format json \
   --quiet > report.json
@@ -61,7 +69,7 @@ behavioral test and source change tailored to the repository:
 OPENAI_API_KEY=your-openai-key \
 TYPESAFE_API_KEY=your-jev-key \
 NODE_ENV=development \
-pnpm safe-upgrade postcss@8.4.35 \
+npx @tenuo/safe-upgrade postcss@8.4.35 \
   --repository ~/src/app \
   --engine jev \
   --patch-model your-model-id
@@ -115,7 +123,7 @@ policy.
 
 The Markdown and JSON reports include findings, check results, changed files,
 remaining uncertainty, and links to supporting evidence. Run
-`pnpm safe-upgrade --help` for all exit codes and CLI options.
+`npx @tenuo/safe-upgrade --help` for all exit codes and CLI options.
 
 ## Supported changes
 
@@ -195,6 +203,7 @@ already provides equivalent isolation.
 | `TENUO_RUN_WARRANT` | Supply the production run warrant. |
 | `TENUO_RUN_HOLDER_SECRET` | Prove possession of the production run warrant. |
 | `NODE_ENV=development` | Allow a local trial to create and report its own authority. |
+| `SAFE_UPGRADE_HOME` | Choose where assessment records and run artifacts are stored. |
 
 The three Tenuo production variables are used together. The patch-model mode
 sends selected source and test files to the OpenAI Responses API with response

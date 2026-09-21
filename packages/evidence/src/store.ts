@@ -33,6 +33,7 @@ export type AuditEventType =
   | "review_comment_posted"
   | "release_evidence_missing"
   | "baseline_recorded"
+  | "assessment_applied"
   | "session_delegated"
   | "session_destroyed"
   | "tool_allowed"

@@ -25,6 +25,11 @@ const BIN = join(
   "bin",
   "safe-upgrade.mjs",
 );
+const E2E_STATE = mkdtempSync(join(tmpdir(), "safe-upgrade-cli-state-"));
+
+afterAll(() => {
+  rmSync(E2E_STATE, { recursive: true, force: true });
+});
 
 // Installs from the registry, like the other end-to-end tests. Also needs a Node that can
 // run the binary at all: the package ships TypeScript sources, so a runtime without type
@@ -46,6 +51,7 @@ function run(args: readonly string[], env: Readonly<Record<string, string>> = {}
     env: {
       PATH: process.env["PATH"] ?? "",
       HOME: process.env["HOME"] ?? "",
+      SAFE_UPGRADE_HOME: E2E_STATE,
       ...(sandboxTestOverride === undefined
         ? {}
         : { SAFE_UPGRADE_ALLOW_UNSANDBOXED: sandboxTestOverride }),
@@ -71,6 +77,13 @@ describeE2E("the safe-upgrade binary", () => {
     it("prints usage and exits 0 when given nothing", () => {
       // A bare invocation is someone finding out what this is, not an error.
       expect(run([]).status).toBe(0);
+    });
+
+    it("checks its local requirements", () => {
+      const doctor = run(["doctor"]);
+      expect(doctor.status).toBe(0);
+      expect(doctor.stdout).toContain("Node.js");
+      expect(doctor.stdout).toContain("Process sandbox");
     });
 
     it("exits 64 on a version that is not exact", () => {
@@ -152,6 +165,7 @@ describeE2E("the safe-upgrade binary", () => {
   });
 
   describe("a first-run assessment", () => {
+    const assessmentId = "01234567-89ab-4cde-8fab-0123456789ab";
     let repo: FixtureRepo;
     let artifacts: string;
     let invocation: Invocation;
@@ -160,8 +174,7 @@ describeE2E("the safe-upgrade binary", () => {
       repo = createFixtureRepo();
       artifacts = mkdtempSync(join(tmpdir(), "safe-upgrade-cli-assess-"));
       invocation = run(
-        ["assess", "--repository", repo.path, "--artifacts", artifacts],
-        { NODE_ENV: "development" },
+        ["assess", "--repository", repo.path, "--artifacts", artifacts, "--run-id", assessmentId],
       );
     }, 600_000);
 
@@ -183,8 +196,16 @@ describeE2E("the safe-upgrade binary", () => {
       expect(invocation.stdout).toMatch(/Verification coverage/);
       expect(invocation.stdout).toMatch(/Delegated access used for this assessment/);
       expect(invocation.stdout).not.toMatch(/test_author:.*write_test_file/);
-      expect(invocation.stdout).toContain(`--repository '${repo.path}'`);
+      expect(invocation.stdout).toContain(`npx @tenuo/safe-upgrade apply '${assessmentId}'`);
     });
+
+    it("continues the saved assessment when the repository is unchanged", () => {
+      const applied = run(["apply", assessmentId, "--quiet"]);
+      expect([0, 2, 3, 4, 5]).toContain(applied.status);
+      expect(applied.stdout).toContain("Continues assessment:");
+      expect(applied.stdout).toContain(assessmentId);
+      expect(applied.stderr).not.toContain("run a new assessment");
+    }, 600_000);
 
     it("leaves the repository untouched", () => {
       expect(repo.status()).toBe("");
