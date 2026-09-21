@@ -1,46 +1,29 @@
-# Assess a Dependabot pull request and leave this run's verdict on it.
-#
-# Checkout the *base* branch, not the Dependabot head: the run applies the
-# upgrade itself. Running against a head that is already at the target version
-# is a no-op, and this tool refuses those.
-#
-# `--from-event` reads the package, version, and pull number from the Actions
-# event. It comments on that pull request for every status — verified, blocked,
-# and human_required. `--draft-pr` is optional: add it when you also want a
-# branch that carries any extra files this run wrote (tests, a workflow).
-#
-# This copyable example uses safe-upgrade's explicit self-authorized trial mode.
-# For production, remove NODE_ENV and supply TENUO_ROOT_PUBLIC_KEY,
-# TENUO_RUN_WARRANT, and TENUO_RUN_HOLDER_SECRET from your warrant issuer.
+# Assess Dependabot and Renovate pull requests against the repository's own
+# source and checks. The Action applies the requested release in a disposable
+# repository copy, publishes a job summary, comments on the pull request, and
+# attaches the complete evidence record to the workflow run.
 
-name: Assess Dependabot upgrade
+name: Assess dependency upgrades
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened]
 
 jobs:
-  assess:
-    if: github.actor == 'dependabot[bot]'
+  safe-upgrade:
+    if: >-
+      github.actor == 'dependabot[bot]' ||
+      github.actor == 'renovate[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
     steps:
-      - name: Checkout the base, so the upgrade has somewhere to go
+      - name: Checkout the base revision
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          ref: ${{ github.event.pull_request.base.ref }}
+          ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
 
-      - name: Use Node 22
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: "22.18"
-
-      - name: Assess the bump and comment
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NODE_ENV: development
-        run: |
-          npx --yes @tenuo/safe-upgrade@0.1.0 --from-event --quiet --format json
+      - name: Assess the upgrade
+        uses: tenuo-ai/safe-upgrade-action@v1

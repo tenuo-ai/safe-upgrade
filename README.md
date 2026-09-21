@@ -171,8 +171,15 @@ lockfile entries.
 
 ### Open or assess a pull request
 
-`--draft-pr` opens a draft after a verified run. `--from-event` reads a
-Dependabot pull request event and can comment with any result.
+[`tenuo-ai/safe-upgrade-action`](https://github.com/tenuo-ai/safe-upgrade-action)
+assesses Dependabot and Renovate pull requests, adds the result to the job
+summary, annotates affected files, and attaches the evidence record. The
+workflow checks out the base revision and leaves the caller's checkout
+untouched.
+
+`--draft-pr` remains available for CLI runs that should open a draft after a
+verified result. `--from-event` reads a Dependabot pull request event and can
+comment with any result.
 
 See [Dependabot assessment](examples/dependabot-assess.yml) and
 [scheduled draft upgrades](examples/scheduled-draft.yml) for complete workflows.
