@@ -73,6 +73,13 @@ describeE2E("publishing a verified upgrade", () => {
     const artifacts = mkdtempSync(join(tmpdir(), "safe-upgrade-artifacts-"));
     const received: Received[] = [];
     const { server, baseUrl } = await startFakeGitHub(received);
+    const previousUnsandboxed = process.env["SAFE_UPGRADE_ALLOW_UNSANDBOXED"];
+
+    // This test replaces a network git remote with a bare repository elsewhere
+    // under /tmp. Bubblewrap correctly makes that out-of-worktree path read-only.
+    // The rest of the E2E suite exercises the real sandbox; this test exercises
+    // publishing authorization and effects against two local test doubles.
+    process.env["SAFE_UPGRADE_ALLOW_UNSANDBOXED"] = "1";
 
     try {
       execFileSync("git", ["remote", "add", "origin", remote], { cwd: repo.path, stdio: "pipe" });
@@ -164,6 +171,11 @@ describeE2E("publishing a verified upgrade", () => {
       expect(body).toContain("## What this run does not establish");
       expect(body).toMatch(/no runnable `(typecheck|lint)` script/);
     } finally {
+      if (previousUnsandboxed === undefined) {
+        delete process.env["SAFE_UPGRADE_ALLOW_UNSANDBOXED"];
+      } else {
+        process.env["SAFE_UPGRADE_ALLOW_UNSANDBOXED"] = previousUnsandboxed;
+      }
       await new Promise<void>((resolve) => server.close(() => resolve()));
       rmSync(artifacts, { recursive: true, force: true });
       repo.cleanup();
