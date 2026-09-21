@@ -92,6 +92,9 @@ importers:
       '@safe-upgrade/runner':
         specifier: workspace:*
         version: link:../runner
+      '@safe-upgrade/workers':
+        specifier: workspace:*
+        version: link:../workers
 
   packages/domain:
     dependencies:

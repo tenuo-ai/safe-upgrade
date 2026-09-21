@@ -52,7 +52,7 @@ import {
   type UpgradeState,
 } from "@safe-upgrade/graph";
 import { DeterministicEngine, type DecisionEngine } from "@safe-upgrade/jev";
-import { createWorkerRegistry } from "@safe-upgrade/workers";
+import { createWorkerRegistry, type PatchGenerator } from "@safe-upgrade/workers";
 
 export interface RunOptions {
   /** The user's checkout. Read, never written. */
@@ -73,6 +73,8 @@ export interface RunOptions {
   readonly artifactsDirectory?: string;
   /** Defaults to the deterministic engine, which needs no network. */
   readonly engine?: DecisionEngine;
+  /** Coding model used for structured repository-specific source and test patches. */
+  readonly patchGenerator?: PatchGenerator;
   readonly router?: Partial<RouterConfig>;
   readonly partialAllowed?: boolean;
   /**
@@ -258,6 +260,7 @@ export async function runUpgrade(options: RunOptions): Promise<RunReport> {
       runBranch: isolation.runBranch,
       sourceClean: isolation.sourceClean,
       detectionWarnings: detection.warnings,
+      ...(options.patchGenerator === undefined ? {} : { patchGenerator: options.patchGenerator }),
     });
 
     const routerConfig = { ...DEFAULT_ROUTER, ...options.router };

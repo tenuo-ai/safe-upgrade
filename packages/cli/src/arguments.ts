@@ -39,6 +39,8 @@ export interface ParsedArguments {
   readonly partialAllowed: boolean;
   readonly format: "markdown" | "json";
   readonly engine: "jev" | "deterministic";
+  /** OpenAI model used for bounded source and test patch proposals. */
+  readonly patchModel: string | undefined;
   /** Below this, the engine's answer is replaced by the deterministic order. */
   readonly confidenceThreshold: number | undefined;
   /** Suppress the per-step progress lines, which go to stderr. */
@@ -75,6 +77,7 @@ const TAKES_VALUE = new Set([
   "--github-repository",
   "--format",
   "--engine",
+  "--patch-model",
   "--confidence",
   "--comment-pr",
   "--companion",
@@ -171,6 +174,18 @@ export function parseArguments(argv: readonly string[], now: () => Date = () => 
     throw new UsageError(`--engine must be jev or deterministic, not ${engine}`);
   }
 
+  const patchModel = values.get("--patch-model");
+  if (patchModel !== undefined) {
+    if (patchModel.length > 200 || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(patchModel)) {
+      throw new UsageError(`--patch-model is not a valid model id: ${patchModel}`);
+    }
+    if (engine !== "jev") {
+      throw new UsageError(
+        "--patch-model requires --engine jev so generated patches receive semantic review",
+      );
+    }
+  }
+
   const confidence = values.get("--confidence");
   let confidenceThreshold: number | undefined;
   if (confidence !== undefined) {
@@ -216,6 +231,7 @@ export function parseArguments(argv: readonly string[], now: () => Date = () => 
     partialAllowed: flags.has("--partial-allowed"),
     format,
     engine,
+    patchModel,
     confidenceThreshold,
     quiet: flags.has("--quiet"),
   };

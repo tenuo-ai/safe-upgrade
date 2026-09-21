@@ -19,6 +19,7 @@
     "@safe-upgrade/authorization": "workspace:*",
     "@safe-upgrade/domain": "workspace:*",
     "@safe-upgrade/jev": "workspace:*",
-    "@safe-upgrade/runner": "workspace:*"
+    "@safe-upgrade/runner": "workspace:*",
+    "@safe-upgrade/workers": "workspace:*"
   }
 }

@@ -36,6 +36,10 @@ import { inWorktree, type RunContext } from "./context.ts";
 import { convertToEsm, type Refusal } from "./migrate/to-esm.ts";
 import { renameExportedMember } from "./research/members.ts";
 import { isSourceFile, isTestFile } from "./research/usages.ts";
+import {
+  validatePatchScope,
+  type PatchFileSnapshot,
+} from "./coding-model.ts";
 
 /** Files converted in one pass. Bounded so a large repository cannot stall the run. */
 const MAX_CONVERTED_FILES = 200;
@@ -50,6 +54,9 @@ export function createImplementer(context: RunContext): WorkerFn {
     // attempts rewriting the lockfile.
     const unfixable = input.state.findings.filter((finding) => finding.needsHuman === true);
     if (unfixable.length > 0) {
+      if (context.patchGenerator !== undefined) {
+        return applyModelMigration(input, context, unfixable);
+      }
       return { blockingConditions: unfixable.map(describeUnfixable) };
     }
 
@@ -83,6 +90,152 @@ export function createImplementer(context: RunContext): WorkerFn {
     }
     return migrateToEsm(input, context, esmFinding);
   };
+}
+
+const MAX_MODEL_FILE_CHARS = 50_000;
+
+async function applyModelMigration(
+  input: WorkerInput,
+  context: RunContext,
+  findings: readonly MigrationFinding[],
+): Promise<UpgradeStateUpdate> {
+  const generator = context.patchGenerator;
+  if (generator === undefined) {
+    return { blockingConditions: findings.map(describeUnfixable) };
+  }
+  const editablePaths = unique(
+    findings
+      .flatMap((finding) => finding.affectedFiles)
+      .filter((path) => isSourceFile(path) && !isTestFile(path)),
+  );
+  if (editablePaths.length === 0) {
+    return { blockingConditions: findings.map(describeUnfixable) };
+  }
+  if (editablePaths.length > 32) {
+    return {
+      blockingConditions: [
+        `the findings affect ${String(editablePaths.length)} source files; the coding-model boundary allows at most 32 in one proposal`,
+      ],
+    };
+  }
+
+  const editableFiles = await snapshots(input, context, editablePaths);
+  const requiredFindingIds = new Set(findings.map((finding) => finding.id));
+  const raw = await generator.propose({
+    kind: "source",
+    packageName: context.request.packageName,
+    currentVersion: context.facts.currentVersion,
+    targetVersion: context.request.targetVersion,
+    findings,
+    evidence: input.state.releaseEvidence
+      .filter((record) => findings.some((finding) => finding.evidenceIds.includes(record.id)))
+      .map(({ id, sourceType, relevantExtract }) => ({ id, sourceType, relevantExtract })),
+    editableFiles,
+    contextFiles: [],
+    ...(context.facts.testFramework === undefined
+      ? {}
+      : { testFramework: context.facts.testFramework }),
+    previousChecks: input.state.postChangeChecks.map((check) => ({
+      purpose: check.command.purpose,
+      outcome: check.outcome,
+    })),
+  });
+  const proposal = validatePatchScope(raw, {
+    existingFiles: new Map(editableFiles.map((file) => [file.path, file.hash])),
+    requiredFindingIds,
+    allowCreate: () => false,
+    allowedPathsByFinding: new Map(
+      findings.map((finding) => [finding.id, new Set(finding.affectedFiles)]),
+    ),
+  });
+
+  input.audit.record({
+    phase: "implement",
+    worker: "implementer",
+    type: "model_patch_proposed",
+    payload: {
+      kind: "source",
+      summary: proposal.summary,
+      paths: proposal.changes.map((change) => change.path),
+      findingIds: proposal.addressedFindingIds,
+    },
+  });
+
+  const moved = input.state.dependencyMoved
+    ? { fileChanges: [] as readonly FileChange[] }
+    : await moveAllDependencies(input, context);
+  if (moved.blocking !== undefined) {
+    return { blockingConditions: moved.blocking };
+  }
+
+  const fileChanges: FileChange[] = [...moved.fileChanges];
+  for (const change of proposal.changes) {
+    const written = await input.handle.tools.write_source_file({
+      path: inWorktree(context, change.path),
+      expectedBeforeHash: change.expectedBeforeHash,
+      content: change.content,
+    });
+    fileChanges.push({
+      path: change.path,
+      beforeHash: written.beforeHash,
+      afterHash: written.afterHash,
+      owner: "implementer",
+      reason: change.reason,
+    });
+  }
+
+  const renamed = await applyRenameFindings(
+    input,
+    context,
+    new Set(proposal.changes.map((change) => change.path)),
+  );
+  if (renamed.blocking !== undefined) {
+    return { blockingConditions: renamed.blocking };
+  }
+  fileChanges.push(...renamed.fileChanges);
+
+  input.audit.record({
+    phase: "implement",
+    worker: "implementer",
+    type: "model_patch_applied",
+    payload: {
+      kind: "source",
+      paths: proposal.changes.map((change) => change.path),
+      findingIds: proposal.addressedFindingIds,
+    },
+  });
+
+  return {
+    dependencyMoved: true,
+    fileChanges,
+    addressedFindingIds: [
+      ...proposal.addressedFindingIds,
+      ...input.state.findings
+        .filter((finding) => finding.noSourceChangeRequired === true)
+        .map((finding) => finding.id),
+      ...renameFindingIds(input.state.findings),
+    ],
+  };
+}
+
+async function snapshots(
+  input: WorkerInput,
+  context: RunContext,
+  paths: readonly string[],
+): Promise<readonly PatchFileSnapshot[]> {
+  const files: PatchFileSnapshot[] = [];
+  for (const path of paths) {
+    const read = await input.handle.tools.read_file({ path: inWorktree(context, path) });
+    if (read.content.length > MAX_MODEL_FILE_CHARS) {
+      throw new Error(`${path} is too large for a bounded coding-model request`);
+    }
+    files.push({ path, hash: read.hash, content: read.content });
+  }
+  return files;
+}
+
+function unique(values: readonly string[]): readonly string[] {
+  return [...new Set(values)];
 }
 
 /** Whether any finding is still waiting on a change this worker knows how to make. */

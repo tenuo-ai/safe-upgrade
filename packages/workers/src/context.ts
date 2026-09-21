@@ -18,6 +18,7 @@ import type {
   UpgradeRequest,
 } from "@safe-upgrade/domain";
 import type { CheckKind } from "@safe-upgrade/tools";
+import type { PatchGenerator } from "./coding-model.ts";
 
 export interface RunContext {
   readonly request: UpgradeRequest;
@@ -33,6 +34,8 @@ export interface RunContext {
   /** Whether the user's checkout was clean when the run started. */
   readonly sourceClean: boolean;
   readonly detectionWarnings: readonly string[];
+  /** Optional open-ended patch proposer. It has no tools or repository access. */
+  readonly patchGenerator?: PatchGenerator;
 }
 
 /** Absolute path inside the run's worktree. */

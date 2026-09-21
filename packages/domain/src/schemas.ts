@@ -139,6 +139,90 @@ export const fileChangeSchema = z.object({
   reason: z.string().min(1).max(1000),
 });
 
+const repositoryRelativePathSchema = z
+  .string()
+  .min(1)
+  .max(4096)
+  .refine((value) => !value.startsWith("/"), "path must be repository-relative")
+  .refine(
+    (value) => !value.split(/[\\/]/).includes(".."),
+    "path must stay inside the repository",
+  )
+  .refine((value) => !value.includes("\0"), "path must not contain a null byte");
+
+/** Structured output accepted from a coding model. */
+export const modelPatchProposalSchema = z.object({
+  summary: z.string().min(1).max(1000),
+  addressedFindingIds: z.array(z.string().min(1).max(512)).min(1).max(32),
+  changes: z
+    .array(
+      z.object({
+        path: repositoryRelativePathSchema,
+        expectedBeforeHash: z.union([
+          z.literal("absent"),
+          z.string().regex(/^[0-9a-f]{64}$/),
+        ]),
+        content: z.string().max(500_000),
+        reason: z.string().min(1).max(1000),
+        findingIds: z.array(z.string().min(1).max(512)).min(1).max(32),
+      }),
+    )
+    .min(1)
+    .max(32),
+});
+
+/**
+ * JSON Schema sent to providers that support constrained structured output.
+ *
+ * The Zod version used by the domain package does not expose a stable JSON
+ * Schema converter. Keep this deliberately small, then validate the provider's
+ * response with `modelPatchProposalSchema` before any worker can use it.
+ */
+export const modelPatchProposalJsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["summary", "addressedFindingIds", "changes"],
+  properties: {
+    summary: { type: "string", minLength: 1, maxLength: 1000 },
+    addressedFindingIds: {
+      type: "array",
+      minItems: 1,
+      maxItems: 32,
+      items: { type: "string", minLength: 1, maxLength: 512 },
+    },
+    changes: {
+      type: "array",
+      minItems: 1,
+      maxItems: 32,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["path", "expectedBeforeHash", "content", "reason", "findingIds"],
+        properties: {
+          path: { type: "string", minLength: 1, maxLength: 4096 },
+          expectedBeforeHash: {
+            anyOf: [
+              { const: "absent" },
+              { type: "string", pattern: "^[0-9a-f]{64}$" },
+            ],
+          },
+          content: { type: "string", maxLength: 500_000 },
+          reason: { type: "string", minLength: 1, maxLength: 1000 },
+          findingIds: {
+            type: "array",
+            minItems: 1,
+            maxItems: 32,
+            items: { type: "string", minLength: 1, maxLength: 512 },
+          },
+        },
+      },
+    },
+  },
+} as const;
+
+export type ModelPatchProposal = z.infer<typeof modelPatchProposalSchema>;
+export type ModelPatchChange = ModelPatchProposal["changes"][number];
+
 /**
  * Parse with a stable error shape. Zod's own message is kept but the caller
  * decides how to surface it, so validation failures never leak input values

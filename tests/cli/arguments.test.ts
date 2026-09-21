@@ -7,7 +7,16 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { EXIT, exitCodeFor, HELP, parseArguments, summarize, UsageError, wantsHelp } from "@safe-upgrade/cli";
+import {
+  EXIT,
+  exitCodeFor,
+  HELP,
+  main,
+  parseArguments,
+  summarize,
+  UsageError,
+  wantsHelp,
+} from "@safe-upgrade/cli";
 import type { RunReport } from "@safe-upgrade/runner";
 
 const fixedNow = (): Date => new Date("2026-03-01T12:00:00.000Z");
@@ -202,6 +211,32 @@ describe("who chooses the next step", () => {
 
   it("leaves the threshold alone when not given, rather than inventing one", () => {
     expect(parse("p@1.0.0").confidenceThreshold).toBeUndefined();
+  });
+
+  it("enables a patch model only when Jev will review its work", () => {
+    expect(parse("p@1.0.0", "--engine", "jev", "--patch-model", "gpt-test").patchModel).toBe(
+      "gpt-test",
+    );
+    expect(() => parse("p@1.0.0", "--patch-model", "gpt-test")).toThrow(/requires --engine jev/);
+  });
+
+  it("requires both provider keys through the environment", async () => {
+    const errors: string[] = [];
+    const base = ["p@1.0.0", "--engine", "jev", "--patch-model", "gpt-test"];
+    expect(await main(base, {
+      out: () => undefined,
+      err: (text) => errors.push(text),
+      env: { NODE_ENV: "development", TYPESAFE_API_KEY: "jev-key" },
+    })).toBe(EXIT.usage);
+    expect(errors.join("\n")).toContain("OPENAI_API_KEY");
+
+    errors.length = 0;
+    expect(await main(base, {
+      out: () => undefined,
+      err: (text) => errors.push(text),
+      env: { NODE_ENV: "development", OPENAI_API_KEY: "openai-key" },
+    })).toBe(EXIT.usage);
+    expect(errors.join("\n")).toContain("TYPESAFE_API_KEY");
   });
 });
 

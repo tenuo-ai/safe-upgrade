@@ -26,8 +26,8 @@ runs.
 | --- | --- | --- |
 | Inspector | Confirms the worktree, installs frozen, records which checks already pass or fail | Write anything |
 | Researcher | Reads the two published versions, the repository's call sites, and allowlisted release notes | Write, install, or run tests |
-| Test author | Adds a test when a call site has none | Write production source, the manifest, or CI |
-| Implementer | Moves the dependency and migrates source it has a rule for | Write tests or CI |
+| Test author | Adds a test when a call site has none; can apply a model-proposed behavioral test | Write production source, the manifest, or CI |
+| Implementer | Moves the dependency and applies a built-in or model-proposed source migration | Write tests or CI |
 | CI author | Adds a workflow that runs the checks this run verified | Edit an existing workflow, deploy, or publish |
 | Verifier | Frozen-installs again, runs the checks, reads the diff | Write anything |
 | Publisher | Pushes this run's branch and opens a draft pull request | Merge, mark ready, or push any other branch |
@@ -59,6 +59,33 @@ installed version to the target:
 A release note can raise a concern. It cannot, by itself, mark the upgrade
 safe. A name the note mentions that is not in both surfaces is ignored.
 
+## How repository-specific patches are produced
+
+`--patch-model` adds a coding model as a proposal service outside the LangGraph
+specialist set. It receives a bounded request assembled from trusted run state
+and returns structured data. The service gets no Tenuo warrant or tool handle,
+so all reads, commands, dependency updates, and writes remain with the
+specialists.
+
+For a test proposal, the test author selects existing test files that may be
+edited and affected source files that may be read as context. A new path is
+accepted only when it is recognized as a test file. For a source proposal, the
+implementer selects the affected production files, and no new source path may be
+created. Every proposed edit names the current file hash and the migration
+finding it addresses.
+
+The worker validates the complete proposal before making the first write. It
+rejects stale hashes, unselected paths, duplicate paths, missing findings, and
+invented finding ids. Accepted writes still pass through the worker's normal
+Tenuo-protected tool. The test author and implementer therefore apply separate
+parts of the migration with separate warrants.
+
+Jev remains responsible for semantic judgement. It evaluates whether the new
+tests cover the reported break and whether the final candidate accounts for the
+findings. LangGraph uses those results and deterministic state to decide what
+work is eligible next. Verification then executes the repository's checks in
+the operating system sandbox.
+
 ## What gets written
 
 The package manager updates the named package(s) and the lockfile. Source
@@ -67,9 +94,11 @@ or a rename both observations agree on. A new test file is added when a
 reached symbol has no test. A new workflow file is added when CI does not
 run a check this run used.
 
-The run will not invent a replacement for a removed export, rewrite an
-existing workflow in place, or treat a green suite as proof when the broken
-call site is not in that suite.
+Without a patch model, the run does not invent a replacement for a removed
+export. With one, it can apply a bounded repository-specific proposal to files
+the finding already identified. The run does not rewrite an existing workflow
+in place or treat a green suite as proof when the broken call site is not in
+that suite.
 
 ## What "verified" means
 
@@ -122,6 +151,12 @@ the request includes at most 4,000 characters from each relevant test and each
 changed-file patch. Unrelated tests, full repository files, command output,
 environment variables, warrants, and credentials are not sent. The
 deterministic engine keeps all repository source local.
+
+When `--patch-model` is selected, the affected source files and selected test
+files are sent to the OpenAI Responses API. The request enables no model tools
+and asks the API not to store the response. This mode requires Jev because the
+generated tests and source migration need semantic review in addition to
+deterministic validation.
 
 ## Authority for the process itself
 

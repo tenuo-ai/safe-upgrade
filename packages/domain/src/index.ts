@@ -35,6 +35,8 @@ export {
   exactVersionSchema,
   fileChangeSchema,
   migrationFindingSchema,
+  modelPatchProposalSchema,
+  modelPatchProposalJsonSchema,
   packageManagerSchema,
   packageNameSchema,
   parseOrThrow,
@@ -42,6 +44,7 @@ export {
   upgradeRequestSchema,
   upgradeTargetSchema,
 } from "./schemas.ts";
+export type { ModelPatchChange, ModelPatchProposal } from "./schemas.ts";
 
 export type { ClassificationInput } from "./result.ts";
 export { classifyRun, isSafeToPresentAsVerified } from "./result.ts";

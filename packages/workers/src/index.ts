@@ -11,6 +11,19 @@ import { createVerifier } from "./verifier.ts";
 
 export type { RunContext } from "./context.ts";
 export { inWorktree } from "./context.ts";
+export type {
+  LangChainStructuredModel,
+  OpenAIPatchGeneratorOptions,
+  PatchFileSnapshot,
+  PatchGenerationRequest,
+  PatchGenerator,
+} from "./coding-model.ts";
+export {
+  LangChainPatchGenerator,
+  OpenAIPatchGenerator,
+  validatePatchProposal,
+  validatePatchScope,
+} from "./coding-model.ts";
 export {
   createCiAuthor,
   coveredPurposes,

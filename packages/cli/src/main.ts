@@ -26,6 +26,7 @@ import { chooseAuthorization } from "./authorization.ts";
 import { DeterministicEngine, JevDecisionEngine } from "@safe-upgrade/jev";
 import { PackageResolutionError, RepositoryError } from "@safe-upgrade/domain";
 import { HELP, VERSION } from "./help.ts";
+import { OpenAIPatchGenerator } from "@safe-upgrade/workers";
 
 export interface Streams {
   readonly out: (text: string) => void;
@@ -180,8 +181,18 @@ function toRunOptions(
     );
   }
 
+  const openAiKey = streams.env["OPENAI_API_KEY"];
+  if (parsed.patchModel !== undefined && (openAiKey === undefined || openAiKey === "")) {
+    throw new UsageError(
+      "--patch-model needs OPENAI_API_KEY in the environment. It is not accepted as a flag.",
+    );
+  }
+
   return {
     engine: buildEngine(parsed, streams),
+    ...(parsed.patchModel === undefined || openAiKey === undefined
+      ? {}
+      : { patchGenerator: new OpenAIPatchGenerator({ apiKey: openAiKey, model: parsed.patchModel }) }),
     ...(parsed.confidenceThreshold === undefined
       ? {}
       : { router: { confidenceThreshold: parsed.confidenceThreshold } }),

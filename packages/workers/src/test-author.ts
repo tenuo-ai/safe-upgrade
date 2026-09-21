@@ -20,6 +20,7 @@ import type { UpgradeStateUpdate, WorkerFn, WorkerInput } from "@safe-upgrade/gr
 import { inWorktree, type RunContext } from "./context.ts";
 import { convertToEsm } from "./migrate/to-esm.ts";
 import { findUsages, isSourceFile, isTestFile } from "./research/usages.ts";
+import { validatePatchScope, type PatchFileSnapshot } from "./coding-model.ts";
 
 export function createTestAuthor(context: RunContext): WorkerFn {
   return async (input: WorkerInput): Promise<UpgradeStateUpdate> =>
@@ -143,9 +144,17 @@ async function authorTests(input: WorkerInput, context: RunContext): Promise<Upg
   // own, the after-assessment says everything is covered and does not say why it now
   // is. The spec's fallback order means the `assess_verification` phase is often
   // never reached, so this is where the gap gets recorded.
-  await assess(input, context);
+  const initial = await assess(input, context);
+  const initiallyUncovered = new Set(
+    (initial.testAssessment as TestAssessment | null)?.uncoveredFindings ?? [],
+  );
 
-  const added = await addMissingTests(input, context, esmFinding !== undefined);
+  const model = await addModelTests(input, context, initiallyUncovered);
+  const modelFindingIds = new Set(model.findingIds);
+  const added = [
+    ...model.changes,
+    ...(await addMissingTests(input, context, esmFinding !== undefined, modelFindingIds)),
+  ];
   const migrated = esmFinding === undefined ? [] : await migrateTests(input, context);
 
   // And re-assessed, so the router stops sending this worker to write a test it has
@@ -229,11 +238,15 @@ async function addMissingTests(
   input: WorkerInput,
   context: RunContext,
   targetIsEsm: boolean,
+  skipFindingIds: ReadonlySet<string> = new Set(),
 ): Promise<readonly FileChange[]> {
   const graph = await moduleGraph(input, context);
   const changes: FileChange[] = [];
 
   for (const finding of input.state.findings) {
+    if (skipFindingIds.has(finding.id)) {
+      continue;
+    }
     for (const file of unreachedFiles(finding, graph)) {
       const framework = context.facts.testFramework;
       if (framework === undefined) {
@@ -272,6 +285,113 @@ async function addMissingTests(
     }
   }
   return changes;
+}
+
+async function addModelTests(
+  input: WorkerInput,
+  context: RunContext,
+  uncoveredFindingIds: ReadonlySet<string>,
+): Promise<{ readonly changes: readonly FileChange[]; readonly findingIds: readonly string[] }> {
+  const generator = context.patchGenerator;
+  if (generator === undefined) {
+    return { changes: [], findingIds: [] };
+  }
+  const findings = input.state.findings.filter(
+    (finding) =>
+      uncoveredFindingIds.has(finding.id) &&
+      finding.needsHuman === true &&
+      finding.noSourceChangeRequired !== true,
+  );
+  if (findings.length === 0) {
+    return { changes: [], findingIds: [] };
+  }
+
+  const graph = await moduleGraph(input, context);
+  const editableFiles = await modelSnapshots(input, context, graph.testFiles);
+  const sourcePaths = [...new Set(findings.flatMap((finding) => finding.affectedFiles))]
+    .filter((path) => isSourceFile(path) && !isTestFile(path));
+  const contextFiles = await modelSnapshots(input, context, sourcePaths);
+  const requiredFindingIds = new Set(findings.map((finding) => finding.id));
+  const raw = await generator.propose({
+    kind: "tests",
+    packageName: context.request.packageName,
+    currentVersion: context.facts.currentVersion,
+    targetVersion: context.request.targetVersion,
+    findings,
+    evidence: input.state.releaseEvidence
+      .filter((record) => findings.some((finding) => finding.evidenceIds.includes(record.id)))
+      .map(({ id, sourceType, relevantExtract }) => ({ id, sourceType, relevantExtract })),
+    editableFiles,
+    contextFiles,
+    ...(context.facts.testFramework === undefined
+      ? {}
+      : { testFramework: context.facts.testFramework }),
+    previousChecks: input.state.postChangeChecks.map((check) => ({
+      purpose: check.command.purpose,
+      outcome: check.outcome,
+    })),
+  });
+  const proposal = validatePatchScope(raw, {
+    existingFiles: new Map(editableFiles.map((file) => [file.path, file.hash])),
+    requiredFindingIds,
+    allowCreate: (path) => isTestFile(path),
+  });
+
+  input.audit.record({
+    phase: "author_tests",
+    worker: "test_author",
+    type: "model_patch_proposed",
+    payload: {
+      kind: "tests",
+      summary: proposal.summary,
+      paths: proposal.changes.map((change) => change.path),
+      findingIds: proposal.addressedFindingIds,
+    },
+  });
+
+  const changes: FileChange[] = [];
+  for (const change of proposal.changes) {
+    const written = await input.handle.tools.write_test_file({
+      path: inWorktree(context, change.path),
+      expectedBeforeHash: change.expectedBeforeHash,
+      content: change.content,
+    });
+    changes.push({
+      path: change.path,
+      beforeHash: written.beforeHash,
+      afterHash: written.afterHash,
+      owner: "test_author",
+      reason: change.reason,
+    });
+  }
+
+  input.audit.record({
+    phase: "author_tests",
+    worker: "test_author",
+    type: "model_patch_applied",
+    payload: {
+      kind: "tests",
+      paths: proposal.changes.map((change) => change.path),
+      findingIds: proposal.addressedFindingIds,
+    },
+  });
+  return { changes, findingIds: proposal.addressedFindingIds };
+}
+
+async function modelSnapshots(
+  input: WorkerInput,
+  context: RunContext,
+  paths: readonly string[],
+): Promise<readonly PatchFileSnapshot[]> {
+  const snapshots: PatchFileSnapshot[] = [];
+  for (const path of paths.slice(0, 32)) {
+    const read = await input.handle.tools.read_file({ path: inWorktree(context, path) });
+    if (read.content.length > 50_000) {
+      continue;
+    }
+    snapshots.push({ path, hash: read.hash, content: read.content });
+  }
+  return snapshots;
 }
 
 function unreachedFiles(finding: MigrationFinding, graph: ModuleGraph): readonly string[] {

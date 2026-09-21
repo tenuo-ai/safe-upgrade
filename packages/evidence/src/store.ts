@@ -19,6 +19,8 @@ export type AuditEventType =
   | "prose_assessed"
   | "test_coverage_semantically_assessed"
   | "migration_completeness_assessed"
+  | "model_patch_proposed"
+  | "model_patch_applied"
   | "elevation_granted"
   | "elevation_refused"
   | "elevation_requested"

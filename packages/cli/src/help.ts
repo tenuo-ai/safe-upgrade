@@ -2,7 +2,7 @@
 
 export const VERSION = "0.0.0";
 
-export const HELP = `safe-upgrade — upgrade one dependency, and establish what that did
+export const HELP = `safe-upgrade: upgrade one dependency, and establish what that did
 
 Usage
   safe-upgrade <name>@<exact-version> [options]
@@ -40,6 +40,8 @@ Options
   --engine jev|deterministic  Who chooses the next step. Default: deterministic, which
                               makes the route a pure function of run state. jev needs
                               TYPESAFE_API_KEY.
+  --patch-model <model-id>    Let an OpenAI coding model propose repository-specific tests
+                              and source changes. Requires --engine jev and OPENAI_API_KEY.
   --confidence <0..1>         Below this, the engine's answer is replaced by the
                               deterministic order and the route says so. Default: 0.6.
   --version, --help
@@ -48,6 +50,7 @@ Environment
   GITHUB_TOKEN                Required for publishing. Never accepted as a flag: an
                               argument ends up in shell history and in process listings.
   TYPESAFE_API_KEY            Required by --engine jev. Never accepted as a flag.
+  OPENAI_API_KEY              Required by --patch-model. Never accepted as a flag.
   TENUO_ROOT_PUBLIC_KEY       The issuer this run trusts.
   TENUO_RUN_WARRANT           The warrant this run holds.
   TENUO_RUN_HOLDER_SECRET     The secret proving it holds it.
@@ -58,17 +61,18 @@ Environment
 Exit codes
   0   verified, or partial with --partial-allowed
   2   partial
-  3   human_required — something needs approving; run again with --approve
+  3   human_required: something needs approving; run again with --approve
   4   blocked
   5   indeterminate
   64  the command line could not be understood
-  65  the repository cannot be upgraded by this run — no lockfile, the package is
+  65  the repository cannot be upgraded by this run: no lockfile, the package is
       not a direct dependency, or its installed version cannot be determined
   70  the run could not complete
 
 Examples
   safe-upgrade postcss@8.4.35 --repository ~/src/app
   safe-upgrade postcss@8.4.35 --workspace packages/app --companion nanoid@5.0.0
+  safe-upgrade postcss@8.4.35 --engine jev --patch-model your-model-id
   safe-upgrade escape-string-regexp@5.0.0 --approve 4f3c2b1a --approved-by alice
   safe-upgrade left-pad@1.3.0 --draft-pr --github-repository acme/app
   safe-upgrade --from-event

@@ -26,8 +26,9 @@ A run follows the same path you would want from a careful engineer:
 3. Compare the installed and target package surfaces and read available release
    guidance.
 4. Work in a temporary git worktree while the source checkout stays untouched.
-5. Add focused tests when an affected path lacks coverage, then apply supported
-   source and dependency changes.
+5. Add focused tests when an affected path lacks coverage, then apply source and
+   dependency changes. With a patch model configured, these can be tailored to
+   the repository instead of limited to built-in migrations.
 6. Install from the updated lockfile, rerun the checks, inspect the final diff,
    and account for every finding.
 7. Save the report, evidence, route history, and authorization events for review.
@@ -130,9 +131,40 @@ variables, credentials, warrants, command output, unrelated tests, and complete
 repository files. Choose the deterministic engine when repository source must
 stay local.
 
+## Generate a repository-specific migration
+
+Use `--patch-model` when an upgrade needs more than one of the built-in edits.
+The coding model receives the affected source files, relevant release evidence,
+and the exact findings it must address. It first proposes behavioral tests, then
+proposes the production change. Jev judges whether the tests cover the finding
+and whether the final migration is complete.
+
+```bash
+OPENAI_API_KEY=your-openai-key \
+TYPESAFE_API_KEY=your-jev-key \
+NODE_ENV=development \
+pnpm safe-upgrade postcss@8.4.35 \
+  --repository ~/src/app \
+  --engine jev \
+  --patch-model your-model-id
+```
+
+The coding model returns a structured proposal with complete file contents,
+expected file hashes, and the findings each change addresses. It has no command,
+filesystem, credential, or warrant handle. Trusted worker code validates the
+paths, hashes, and finding ids. The test author applies test-file changes with
+its Tenuo warrant, and the implementer applies source-file changes with a
+different warrant. Each warrant limits writes to that worker's file class.
+
+This mode sends the selected source and test files to the OpenAI Responses API.
+Responses are requested with storage disabled. `--patch-model` requires
+`--engine jev`, so generated code does not bypass the semantic review that gives
+the multi-agent workflow its purpose.
+
 ## Supported changes
 
-The current implementation handles a deliberately focused set of migrations:
+Without `--patch-model`, the implementation handles a deliberately focused set
+of migrations:
 
 - Move one or more named direct dependencies to exact versions and refresh the
   lockfile.
@@ -142,10 +174,11 @@ The current implementation handles a deliberately focused set of migrations:
 - Add focused load tests for Node test, Vitest, Jest, or Mocha repositories.
 - Add a new CI workflow that runs the checks established during verification.
 
-When the evidence does not support a mechanical edit, the run records the
-affected symbols, files, and missing decision for a person. Existing workflows
-and ambiguous API replacements stay in the review path. Dependency lifecycle
-scripts remain disabled throughout installs and updates.
+With `--patch-model`, a repository-specific source migration and behavioral test
+can be proposed for findings that the built-in rules leave for a person. The
+same file scope, warrant checks, sandboxed verification, and final diff policy
+still apply. Existing workflow edits stay in the review path. Dependency
+lifecycle scripts remain disabled throughout installs and updates.
 
 Two fixtures make useful first examples:
 
@@ -244,6 +277,7 @@ setting is active.
 | --- | --- |
 | `GITHUB_TOKEN` or `GH_TOKEN` | Authenticate draft pull requests and pull request comments. |
 | `TYPESAFE_API_KEY` | Enable `--engine jev`. |
+| `OPENAI_API_KEY` | Enable repository-specific patch proposals with `--patch-model`. |
 | `TENUO_ROOT_PUBLIC_KEY` | Identify the production authorization root. |
 | `TENUO_RUN_WARRANT` | Supply the production run warrant. |
 | `TENUO_RUN_HOLDER_SECRET` | Prove possession for the production run warrant. |
