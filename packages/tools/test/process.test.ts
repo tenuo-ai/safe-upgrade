@@ -35,6 +35,7 @@ describe("environment allowlist", () => {
       const env = buildEnvironment();
       expect(env.SAFE_UPGRADE_LEAK_CANARY).toBeUndefined();
       expect(env.CI).toBe("1");
+      expect(env.GIT_OPTIONAL_LOCKS).toBe("0");
       expect(Object.keys(env)).toContain("PATH");
       expect(env.HOME).toBeUndefined();
     } finally {

@@ -52,6 +52,11 @@ export function buildEnvironment(extra: Readonly<Record<string, string>> = {}): 
   env.CI = "1";
   env.TERM = "dumb";
   env.NO_COLOR = "1";
+  // A linked worktree stores its index in the source repository's Git
+  // administration directory, outside the writable sandbox root. Read-only
+  // commands such as `git status` may refresh that index unless optional locks
+  // are disabled. Required locks for `git add` and `git commit` still work.
+  env.GIT_OPTIONAL_LOCKS = "0";
   env.npm_config_color = "false";
   env.npm_config_audit = "false";
   env.npm_config_fund = "false";
