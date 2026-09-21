@@ -178,9 +178,10 @@ describeE2E("the safe-upgrade binary", () => {
 
     it("prints risk, coverage, warrant boundaries, and the continuation", () => {
       expect(invocation.stdout).toMatch(/^# Upgrade assessment for escape-string-regexp/m);
-      expect(invocation.stdout).toMatch(/Repository-specific findings/);
-      expect(invocation.stdout).toMatch(/Existing verification coverage/);
-      expect(invocation.stdout).toMatch(/Tenuo warrant boundaries used/);
+      expect(invocation.stdout).toMatch(/Migration work: required for 2 affected files/);
+      expect(invocation.stdout).toMatch(/Impact on this repository/);
+      expect(invocation.stdout).toMatch(/Verification coverage/);
+      expect(invocation.stdout).toMatch(/Delegated access used for this assessment/);
       expect(invocation.stdout).not.toMatch(/test_author:.*write_test_file/);
       expect(invocation.stdout).toContain(`--repository '${repo.path}'`);
     });

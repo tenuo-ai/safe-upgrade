@@ -19,6 +19,7 @@ import { describeProgress, type ProgressReporter } from "./progress.ts";
 import { renderReviewNote } from "./review-note.ts";
 import { join } from "node:path";
 import {
+  count,
   describeElevation,
   grantFor,
   parseOrThrow,
@@ -599,6 +600,14 @@ export function renderReport(report: RunReport): string {
 export function renderAssessment(report: RunReport): string {
   const { facts, finalState, request } = report;
   const sourceRepositoryPath = report.sourceRepositoryPath ?? facts.worktreePath;
+  const affectedFiles = [...new Set(finalState.findings.flatMap((finding) => finding.affectedFiles))];
+  const migrationFindings = finalState.findings.filter(
+    (finding) => finding.noSourceChangeRequired !== true,
+  );
+  const compatibilityFindings = finalState.findings.filter(
+    (finding) => finding.noSourceChangeRequired === true,
+  );
+  const coverage = finalState.testAssessment;
   const lines: string[] = [
     `# Upgrade assessment for ${request.packageName}`,
     "",
@@ -610,6 +619,12 @@ export function renderAssessment(report: RunReport): string {
     `- Repository: ${sourceRepositoryPath} at ${report.startCommit}`,
     "- Repository files changed: none",
     "",
+    "## Assessment",
+    "",
+    `- Migration work: ${migrationFindings.length === 0 ? "no repository-specific source or test migration identified" : `required for ${count(affectedFiles.length, "affected file")}`}`,
+    `- Compatibility checks: ${compatibilityFindings.length === 0 ? "none identified" : count(compatibilityFindings.length, "repository condition")}`,
+    `- Existing verification: ${coverage === null ? "no coverage gap required assessment" : coverage.sufficient ? "covers the identified migration risk" : "does not cover all affected code"}`,
+    "",
   ];
 
   const section = (title: string, items: readonly string[]): void => {
@@ -620,26 +635,30 @@ export function renderAssessment(report: RunReport): string {
     (check) => `${check.command.purpose}: ${check.outcome}`,
   );
   section("Current baseline", checks);
-  section(
-    "Repository-specific findings",
-    finalState.findings.map((finding) => {
-      const files = finding.affectedFiles.length === 0
-        ? "no affected files found"
-        : `affects ${finding.affectedFiles.map((path) => `\`${path}\``).join(", ")}`;
-      return `${finding.releaseClaim}; ${files}. Required response: ${finding.requiredChange}`;
-    }),
-  );
+  if (finalState.findings.length > 0) {
+    lines.push("## Impact on this repository", "");
+    for (const finding of finalState.findings) {
+      lines.push(`- ${finding.releaseClaim}`);
+      lines.push(
+        finding.affectedFiles.length === 0
+          ? "  - Repository evidence: no source edit is currently indicated"
+          : `  - Affected code: ${finding.affectedFiles.map((path) => `\`${path}\``).join(", ")}`,
+        `  - Required work: ${finding.requiredChange}`,
+      );
+    }
+    lines.push("");
+  }
   if (finalState.findings.length === 0) {
     lines.push(
-      "## Repository-specific findings",
+      "## Impact on this repository",
       "",
       "- No migration finding was established from the available package and repository evidence.",
       "",
     );
   }
-  if (finalState.testAssessment !== null) {
-    section("Existing verification coverage", [
-      `${finalState.testAssessment.sufficient ? "Sufficient" : "Gaps found"}: ${finalState.testAssessment.rationale}`,
+  if (coverage !== null) {
+    section("Verification coverage", [
+      `${coverage.sufficient ? "Covered" : "Gap"}: ${coverage.rationale}`,
     ]);
   }
   section("Uncertainty to review", finalState.highSeverityUncertainty);
@@ -650,11 +669,11 @@ export function renderAssessment(report: RunReport): string {
     const held = Array.isArray(capabilities) ? capabilities.join(", ") : "no capabilities recorded";
     return `${event.worker ?? "worker"}: ${held}`;
   });
-  section("Tenuo warrant boundaries used", [...new Set(boundaries)]);
+  section("Delegated access used for this assessment", [...new Set(boundaries)]);
 
   const workspace = request.workspace === "" ? "" : ` --workspace ${shellQuote(request.workspace)}`;
   lines.push(
-    "## Continue with the upgrade",
+    "## Apply the upgrade",
     "",
     "```bash",
     `pnpm safe-upgrade ${shellQuote(`${request.packageName}@${request.targetVersion}`)} --repository ${shellQuote(sourceRepositoryPath)}${workspace}`,

@@ -50,9 +50,10 @@ describeE2E("a read-only first-run assessment", () => {
   it("writes a useful assessment and a continuation command", () => {
     const markdown = readFileSync(join(artifacts, "report.md"), "utf8");
     expect(markdown).toBe(renderAssessment(report));
-    expect(markdown).toMatch(/Repository-specific findings/);
-    expect(markdown).toMatch(/Existing verification coverage/);
-    expect(markdown).toMatch(/Tenuo warrant boundaries used/);
+    expect(markdown).toMatch(/Migration work: required for 2 affected files/);
+    expect(markdown).toMatch(/Impact on this repository/);
+    expect(markdown).toMatch(/Verification coverage/);
+    expect(markdown).toMatch(/Delegated access used for this assessment/);
     expect(markdown).not.toMatch(/test_author:.*write_test_file/);
     expect(markdown).toMatch(/test_author: read_file, list_files/);
     expect(markdown).toContain(`--repository '${repo.path}'`);
