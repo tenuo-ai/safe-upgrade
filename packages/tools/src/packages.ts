@@ -17,7 +17,7 @@
  */
 
 import { ToolExecutionError } from "@safe-upgrade/domain";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { CheckOutcome, CheckPurpose, CommandSpec, PackageManager } from "@safe-upgrade/domain";
 import { defineTool, type RawTool, type ToolContext } from "./context.ts";
@@ -139,12 +139,16 @@ function installArgs(manager: PackageManager, args: InstallArgs): string[] {
 }
 
 /** Exported for proving that every manager suppresses dependency lifecycle scripts. */
-export function updateArgs(manager: PackageManager, spec: string, workspace: string = ""): string[] {
+export function updateArgs(
+  manager: PackageManager,
+  spec: string,
+  pnpmWorkspaceRoot: boolean = false,
+): string[] {
   switch (manager) {
     case "pnpm":
       return [
         "add",
-        ...(workspace.length === 0 ? ["--workspace-root"] : []),
+        ...(pnpmWorkspaceRoot ? ["--workspace-root"] : []),
         spec,
         "--save-exact",
         "--ignore-scripts",
@@ -267,7 +271,10 @@ export function createPackageTools(context: ToolContext): {
             ...updateArgs(
               manager,
               `${args.packageName}@${args.targetVersion}`,
-              context.workspaceSelector,
+              manager === "pnpm" &&
+                context.workspaceSelector.length === 0 &&
+                (existsSync(join(cwd, "pnpm-workspace.yaml")) ||
+                  existsSync(join(cwd, "pnpm-workspace.yml"))),
             ),
           ],
           cwd,

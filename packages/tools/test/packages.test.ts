@@ -24,7 +24,7 @@ describe("dependency updates", () => {
   });
 
   it("updates a dependency explicitly at a pnpm workspace root", () => {
-    expect(updateArgs("pnpm", "example@2.0.0")).toEqual([
+    expect(updateArgs("pnpm", "example@2.0.0", true)).toEqual([
       "add",
       "--workspace-root",
       "example@2.0.0",
@@ -33,8 +33,8 @@ describe("dependency updates", () => {
     ]);
   });
 
-  it("does not force a filtered pnpm update back to the workspace root", () => {
-    expect(updateArgs("pnpm", "example@2.0.0", "packages/example")).not.toContain(
+  it("does not use a workspace-root flag for a standalone pnpm repository", () => {
+    expect(updateArgs("pnpm", "example@2.0.0")).not.toContain(
       "--workspace-root",
     );
   });
