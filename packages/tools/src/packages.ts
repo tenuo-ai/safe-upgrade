@@ -139,10 +139,16 @@ function installArgs(manager: PackageManager, args: InstallArgs): string[] {
 }
 
 /** Exported for proving that every manager suppresses dependency lifecycle scripts. */
-export function updateArgs(manager: PackageManager, spec: string): string[] {
+export function updateArgs(manager: PackageManager, spec: string, workspace: string = ""): string[] {
   switch (manager) {
     case "pnpm":
-      return ["add", spec, "--save-exact", "--ignore-scripts"];
+      return [
+        "add",
+        ...(workspace.length === 0 ? ["--workspace-root"] : []),
+        spec,
+        "--save-exact",
+        "--ignore-scripts",
+      ];
     case "npm":
       return ["install", spec, "--save-exact", "--ignore-scripts"];
     case "yarn":
@@ -258,7 +264,11 @@ export function createPackageTools(context: ToolContext): {
           executable: manager,
           args: [
             ...workspaceArgs(manager, context.workspaceSelector),
-            ...updateArgs(manager, `${args.packageName}@${args.targetVersion}`),
+            ...updateArgs(
+              manager,
+              `${args.packageName}@${args.targetVersion}`,
+              context.workspaceSelector,
+            ),
           ],
           cwd,
           purpose: "install",

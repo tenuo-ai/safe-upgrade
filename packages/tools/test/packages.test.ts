@@ -22,6 +22,22 @@ describe("dependency updates", () => {
       expect(updateArgs(manager, "example@2.0.0"), manager).toContain("--ignore-scripts");
     }
   });
+
+  it("updates a dependency explicitly at a pnpm workspace root", () => {
+    expect(updateArgs("pnpm", "example@2.0.0")).toEqual([
+      "add",
+      "--workspace-root",
+      "example@2.0.0",
+      "--save-exact",
+      "--ignore-scripts",
+    ]);
+  });
+
+  it("does not force a filtered pnpm update back to the workspace root", () => {
+    expect(updateArgs("pnpm", "example@2.0.0", "packages/example")).not.toContain(
+      "--workspace-root",
+    );
+  });
 });
 
 /**
