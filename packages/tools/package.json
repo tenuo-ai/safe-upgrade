@@ -12,6 +12,6 @@
   "dependencies": {
     "@safe-upgrade/domain": "workspace:*",
     "@safe-upgrade/evidence": "workspace:*",
-    "zod": "3.25.76"
+    "zod": "4.6.6"
   }
 }
