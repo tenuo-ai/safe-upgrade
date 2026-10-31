@@ -35,7 +35,7 @@
     "safe-upgrade": "node packages/cli/bin/safe-upgrade.mjs"
   },
   "dependencies": {
-    "@tenuo/core": "0.3.0-beta.0"
+    "@tenuo/core": "0.3.5-beta.0"
   },
   "devDependencies": {
     "@langchain/langgraph": "1.4.16",
