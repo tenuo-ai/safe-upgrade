@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@tenuo/core':
-        specifier: 0.3.0-beta.0
-        version: 0.3.0-beta.0
+        specifier: 0.3.5-beta.0
+        version: 0.3.5-beta.0
     devDependencies:
       '@langchain/langgraph':
         specifier: 1.4.16
@@ -70,8 +70,8 @@ importers:
         specifier: workspace:*
         version: link:../tools
       '@tenuo/core':
-        specifier: 0.3.0-beta.0
-        version: 0.3.0-beta.0
+        specifier: 0.3.5-beta.0
+        version: 0.3.5-beta.0
 
   packages/bootstrap:
     dependencies:
@@ -538,8 +538,8 @@ packages:
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
-  '@tenuo/core@0.3.0-beta.0':
-    resolution: {integrity: sha512-5Eum1WcMQe4ed5sNs0Pq2B+EiNLRoLafRbL+/k9bjO4150ssgF/cchByY+irpqulrfolZWKvwAO8/yCJzcaohA==}
+  '@tenuo/core@0.3.5-beta.0':
+    resolution: {integrity: sha512-aDZQdqHW0GhFYGenHoEDrYyGopCE/o9Hz+EGAh6AqMUU1HmkREGG8BWwl7DaC/n6WGfTiXKwrYFG/vRKFVrYQQ==}
     engines: {node: '>=20'}
 
   '@types/chai@5.2.3':
@@ -1085,7 +1085,7 @@ snapshots:
 
   '@standard-schema/spec@1.1.0': {}
 
-  '@tenuo/core@0.3.0-beta.0': {}
+  '@tenuo/core@0.3.5-beta.0': {}
 
   '@types/chai@5.2.3':
     dependencies:
